@@ -1,0 +1,8 @@
+<script setup>
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { api, setSession } from '../api/index.js';
+const token = ref(''), busy = ref(false), router = useRouter();
+async function login() { if (!token.value) return; busy.value = true; try { setSession(await api('/auth/login', { method: 'POST', body: { token: token.value } })); token.value = ''; await router.push('/'); } catch {} finally { busy.value = false; } }
+</script>
+<template><div class="login-page"><section class="login-story"><div class="brand"><span class="brand-symbol">m<span>f</span></span><div>Media Flow<small>媒体工作流管理</small></div></div><div class="login-copy"><div class="eyebrow">YOUR PERSONAL MEDIA PIPELINE</div><h1>让好故事，<br>自动进入媒体库。</h1><p>连接下载、扫描与识别。<br>将重复工作交给流程，将选择留给你。</p></div><div class="login-foot">QBITTORRENT / JELLYFIN / DEEPSEEK</div></section><section class="login-form"><div class="login-form-inner"><h2>登录工作空间</h2><p>使用管理令牌，进入你的媒体工作流面板。</p><el-form @submit.prevent="login"><el-form-item label="管理令牌" label-position="top"><el-input v-model="token" type="password" show-password placeholder="输入 ADMIN_API_TOKEN" autocomplete="current-password" aria-label="管理令牌" /></el-form-item><el-button type="primary" native-type="submit" :loading="busy" :disabled="!token">进入管理面板</el-button></el-form><div class="login-sub">管理令牌位于服务的本地 .env 配置中。<br>服务重启或会话到期后，需要重新登录。</div></div></section></div></template>

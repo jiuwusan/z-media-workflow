@@ -1,0 +1,34 @@
+import Router from '@koa/router';
+import { authController } from '../controller/auth.js';
+import { workflowController } from '../controller/workflow.js';
+import { qbittorrentController } from '../controller/qbittorrent.js';
+import { systemController } from '../controller/system.js';
+export function createRouter(config, services) {
+  const router = new Router();
+  const auth = authController(config, services.auth), workflow = workflowController(services.workflow, services.mediaLibrary), qbt = qbittorrentController(services.qbittorrent), system = systemController(config, services);
+  const admin = async (ctx, next) => { services.auth.authenticate(ctx); await next(); };
+  const webhook = async (ctx, next) => { services.auth.authenticate(ctx, true); await next(); };
+  router.get('/health', ctx => { ctx.body = { data: { status: 'ok' } }; });
+  router.post('/api/auth/login', auth.login);
+  router.get('/api/auth/session', admin, auth.session);
+  router.post('/api/auth/logout', admin, auth.logout);
+  router.get('/api/dashboard', admin, system.dashboard);
+  router.post('/api/connections/check', admin, system.check);
+  router.get('/api/qbittorrent/rss', admin, qbt.rss);
+  router.get('/api/qbittorrent/categories', admin, qbt.categories);
+  router.get('/api/qbittorrent/rss/rules', admin, qbt.rules);
+  router.post('/api/qbittorrent/rss/feeds', admin, qbt.addFeed);
+  router.delete('/api/qbittorrent/rss/feeds', admin, qbt.removeFeed);
+  router.post('/api/qbittorrent/rss/refresh', admin, qbt.refresh);
+  router.put('/api/qbittorrent/rss/rules/:name', admin, qbt.setRule);
+  router.delete('/api/qbittorrent/rss/rules/:name', admin, qbt.removeRule);
+  router.post('/api/webhooks/qbittorrent/completed', webhook, workflow.completed);
+  router.get('/api/media/unidentified', admin, workflow.unidentified);
+  router.get('/api/workflows', admin, workflow.list);
+  router.post('/api/workflows/scan', admin, workflow.scan);
+  router.get('/api/workflows/:jobId', admin, workflow.get);
+  router.post('/api/workflows/:jobId/retry', admin, workflow.retry);
+  router.post('/api/workflows/:jobId/confirm', admin, workflow.confirm);
+  router.post('/api/workflows/:jobId/search', admin, workflow.search);
+  return router;
+}

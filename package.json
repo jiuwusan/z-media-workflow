@@ -1,0 +1,28 @@
+{
+  "name": "z-media-workflow",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "dev:web": "npm run dev --prefix web",
+    "build": "npm run build --prefix web",
+    "test": "node --test test/*.test.js",
+    "test:ui": "node --test test/ui.smoke.mjs",
+    "check:connections": "node scripts/check-connections.mjs"
+  },
+  "dependencies": {
+    "@koa/bodyparser": "^6.0.0",
+    "@koa/router": "^15.0.0",
+    "dotenv": "^17.0.0",
+    "koa": "^3.0.0",
+    "koa-static": "^5.0.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

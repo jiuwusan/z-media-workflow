@@ -1,0 +1,34 @@
+import path from 'node:path';
+import { AppError } from './error.js';
+export function normalizePath(value) {
+  return path.posix.normalize(String(value ?? '').replace(/\\/g, '/')).replace(/\/$/, '');
+}
+export function containsPath(root, target) {
+  let a = normalizePath(root), b = normalizePath(target);
+  if (!root || !target) return false;
+  if (/^[a-z]:/i.test(a)) { a = a.toLowerCase(); b = b.toLowerCase(); }
+  return a === b || b.startsWith(`${a}/`);
+}
+export function mapPath(value, { from, to } = {}) {
+  const normalized = normalizePath(value);
+  return from && to && containsPath(from, value) ? normalizePath(`${to}${normalized.slice(normalizePath(from).length)}`) : normalized;
+}
+export const normalizeName = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '');
+export function providerEntries(item) { return Object.entries(item.ProviderIds ?? {}).filter(([k, v]) => /^(tmdb|tvdb|imdb)$/i.test(k) && v).map(([k, v]) => [k.toLowerCase(), String(v)]); }
+export function hasIdentity(item) { return providerEntries(item).length > 0; }
+export function selectCandidate(identity, candidates) {
+  const matches = candidates.filter(c => hasIdentity(c) && [c.Name, c.OriginalTitle].filter(Boolean).some(n => normalizeName(n) === normalizeName(identity.name)) && (identity.year == null || c.ProductionYear === identity.year));
+  const unique = new Map(matches.map(c => [JSON.stringify(providerEntries(c).sort()), c]));
+  return unique.size === 1 ? [...unique.values()][0] : null;
+}
+export function mediaSource(item) {
+  const file = path.posix.basename(normalizePath(item.Path));
+  return item.Type === 'Series' ? file : file.replace(/\.[^.]+$/, '');
+}
+export function validateIdentity(input) {
+  if (!input || typeof input.name !== 'string' || !input.name.trim() || input.name.length > 300) throw new AppError('识别结果缺少有效媒体名称', 422);
+  const year = input.year ?? null;
+  if (year !== null && (!Number.isInteger(year) || year < 1800 || year > new Date().getFullYear() + 5)) throw new AppError('识别年份无效', 422);
+  return { name: input.name.trim(), year };
+}
+export const isVideo = value => /\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts|webm|iso)$/i.test(value);
