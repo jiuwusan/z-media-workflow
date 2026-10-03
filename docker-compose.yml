@@ -1,0 +1,31 @@
+services:
+  z-media-workflow:
+    image: ${DOCKER_IMAGE:-jiuwusan/z-media-workflow:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: z-media-workflow
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      PUBLIC_URL: ${DOCKER_PUBLIC_URL:-http://localhost:37073/}
+      TZ: Asia/Shanghai
+    ports:
+      - '${DOCKER_HOST_PORT:-37073}:3000'
+    restart: always
+    init: true
+    stop_grace_period: ${DOCKER_STOP_GRACE_PERIOD:-35s}
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    networks:
+      - wk
+
+networks:
+  wk:
+    external: true

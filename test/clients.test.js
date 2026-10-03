@@ -85,3 +85,29 @@ test('Series candidates derive missing ProductionYear from PremiereDate', async 
   const candidates = await jelly.search({ Id: 'series', Type: 'Series' }, { name: '与晋长安', year: 2025 });
   assert.equal(candidates[0].ProductionYear, 2025); assert.equal(candidates[1].ProductionYear, 2026); assert.equal(candidates[2].ProductionYear, undefined);
 });
+
+test('Series readback verifies missing ProductionYear against PremiereDate', async () => {
+  const item = { Id: 'series', Type: 'Series', Name: '余红旧事', PremiereDate: '2026-09-28T16:00:00Z', ProviderIds: { Tmdb: '301494' } };
+  const jelly = new JellyfinService({ pollMs: 1, verifyTimeoutMs: 20 }, async () => ({ Items: [item] }));
+  const confirmed = await jelly.verify('series', { Name: '余红旧事', ProductionYear: 2026, ProviderIds: { Tmdb: '301494' } });
+  assert.equal(confirmed.ProductionYear, 2026);
+  assert.equal(item.ProductionYear, undefined, 'readback normalization does not mutate upstream data');
+});
+
+test('Series date fallback rejects year conflicts, absent dates and mismatched identity', async () => {
+  const candidate = { Name: '余红旧事', ProductionYear: 2026, ProviderIds: { Tmdb: '301494' } };
+  const base = { Type: 'Series', Name: candidate.Name, PremiereDate: '2026-09-28T16:00:00Z', ProviderIds: candidate.ProviderIds };
+  for (const overrides of [
+    { ProductionYear: 2025 },
+    { PremiereDate: '2025-09-28T16:00:00Z' },
+    { PremiereDate: undefined },
+    { PremiereDate: 'invalid-date' },
+    { PremiereDate: '0001-01-01T00:00:00Z' },
+    { ProviderIds: { Tmdb: 'wrong' } },
+    { Name: '其他剧集' },
+    { Type: 'Movie' }
+  ]) {
+    const jelly = new JellyfinService({ pollMs: 1, verifyTimeoutMs: 10 }, async () => ({ Items: [{ ...base, ...overrides }] }));
+    await assert.rejects(jelly.verify('series', candidate), /确认超时/);
+  }
+});

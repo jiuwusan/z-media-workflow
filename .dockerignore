@@ -1,0 +1,12 @@
+.git
+**/node_modules
+web/dist
+.test-artifacts
+.env
+.env.*
+**/.env
+**/.env.*
+test
+docs
+README.md
+*.log

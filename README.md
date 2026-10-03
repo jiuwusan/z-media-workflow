@@ -7,8 +7,8 @@ Koa + Vue 3 媒体工作流与中文管理面板，无数据库。qBittorrent RS
 需要 Node.js 22+。在项目根目录执行：
 
 ```powershell
-npm install
-npm install --prefix web
+npm ci
+npm ci --prefix web
 # 首次部署且没有 .env 时：复制 .env.example 为 .env 并填写凭据
 npm run build
 npm start
@@ -17,6 +17,39 @@ npm start
 打开 http://localhost:3000，使用 `.env` 的 `ADMIN_API_TOKEN` 登录。当前调试环境已写入被 Git 忽略的 `.env`，管理和回调令牌分别随机生成；不在文档或构建产物中记录真实令牌。
 
 开发时分别运行 `npm run dev` 与 `npm run dev:web`，打开 http://localhost:5173。默认 DEV_ORIGIN 允许该来源；改端口时同步调整 `.env`。生产配置 `NODE_ENV=production`、实际 `PUBLIC_URL`，HTTPS 时设置 `COOKIE_SECURE=true`；代理部署时按环境设置 `TRUST_PROXY`。面板与 API 使用同源部署。
+
+## Docker Compose 部署
+
+参考 `senior-buyer`，使用 `jiuwusan/z-media-workflow:latest` 镜像、外部 `wk` 网络和 `restart: always`。镜像基于 Node.js 22，分阶段构建 Vue 面板及后端生产依赖，由非 root 用户运行 Koa，内置 `/health` 健康检查。管理面板和 API 共用一个容器，宿主机默认端口为 **37073**。
+
+在部署机器安装 Docker Engine / Docker Desktop 和 Compose v2，复制项目代码。首次部署将 `.env.example` 复制为 `.env` 并填写各服务密钥、管理令牌及回调令牌；已有 `.env` 时保留配置。在 `.env` 中追加或调整：
+
+```dotenv
+DOCKER_IMAGE=jiuwusan/z-media-workflow:latest
+DOCKER_HOST_PORT=37073
+DOCKER_PUBLIC_URL=http://你的服务器地址:37073/
+DOCKER_STOP_GRACE_PERIOD=35s
+```
+
+使用 HTTPS 反向代理时，`DOCKER_PUBLIC_URL` 填外部 HTTPS 地址，设置 `COOKIE_SECURE=true`；受信任代理转发时设置 `TRUST_PROXY=true`。Compose 会将容器内 `HOST`、`PORT`、`NODE_ENV` 固定为 `0.0.0.0`、`3000`、`production`，并用 `DOCKER_PUBLIC_URL` 覆盖本地开发的 `PUBLIC_URL`。修改宿主机端口时同步修改 `DOCKER_PUBLIC_URL`。
+
+在项目根目录执行：
+
+```sh
+# 与 senior-buyer 共用 wk；网络已存在时跳过创建
+docker network ls --filter name=wk
+docker network create wk
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+docker compose logs -f --tail=100
+```
+
+打开 `http://你的服务器地址:37073/`，使用 `.env` 的 `ADMIN_API_TOKEN` 登录。qBittorrent 完成通知脚本的 `WORKFLOW_CALLBACK_URL` 填 `http://你的服务器地址:37073/api/webhooks/qbittorrent/completed`；如果 qBittorrent 容器也在 `wk` 网络，可用 `http://z-media-workflow:3000/api/webhooks/qbittorrent/completed`。通知脚本仍应在 qBittorrent 所在机器/容器运行。
+
+更新代码后执行 `docker compose up -d --build`。查看三方连接可执行 `docker compose exec z-media-workflow npm run check:connections`。使用已发布镜像时执行 `docker compose pull` 和 `docker compose up -d --no-build`；本项目只配置镜像名，不会自动发布镜像。
+
+`.env` 通过 Compose 在运行时注入，已从构建上下文排除。服务通过远程 API 操作媒体，无需挂载媒体目录或数据库。日志输出到 Docker，单个日志文件最多 10 MB，保留 3 个。任务记录和登录会话保存在内存，重建/重启容器后重新登录、重新扫描；默认关闭等待为 30 秒，调整 `SHUTDOWN_TIMEOUT_MS` 时应将 `DOCKER_STOP_GRACE_PERIOD` 设置得更长。
 
 ## 面板
 
@@ -120,7 +153,7 @@ scripts/          通知与只读联通检查
 
 扫描等待同时检查 Idle 和新 LastExecutionResult，避免把尚未开始的扫描当作完成。扫描与元数据确认均有超时。电影/剧集 RemoteSearch 由 Jellyfin 已配置的提供方执行，需要对应提供方可联网；缺少 provider ID 的候选不能应用。
 
-部分剧集提供方只返回 PremiereDate，不返回 ProductionYear；服务会从有效首播日期提取候选年份，区分同名不同年份的剧集。应用请求若超时，仍会先回读检查实际结果，名称、年份和提供方 ID 验证通过后才标记完成。
+部分剧集提供方只返回 PremiereDate，不返回 ProductionYear；服务会从有效首播日期提取候选年份，区分同名不同年份的剧集。剧集回读缺少 ProductionYear 时，同样使用有效首播年份核对；明确的年份冲突或年份依据缺失不会通过校验。应用请求若超时，仍会先回读检查实际结果，名称、年份和提供方 ID 验证通过后才标记完成。
 
 ```powershell
 npm test

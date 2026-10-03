@@ -1,6 +1,10 @@
 import { createHttpClient, sleep } from '../util/http.js';
 import { AppError } from '../util/error.js';
 import { normalizeName, providerEntries } from '../util/media.js';
+function premiereYear(item) {
+  const year = new Date(item.PremiereDate ?? '').getUTCFullYear();
+  return Number.isInteger(year) && year >= 1800 && year <= new Date().getFullYear() + 5 ? year : undefined;
+}
 export class JellyfinService {
   constructor(config, http) {
     this.config = config;
@@ -56,8 +60,8 @@ export class JellyfinService {
     return results.map(candidate => {
       if (candidate.ProductionYear != null) return candidate;
       // Series providers may emit only PremiereDate, although movies include ProductionYear.
-      const year = new Date(candidate.PremiereDate ?? '').getUTCFullYear();
-      return Number.isInteger(year) && year >= 1800 && year <= new Date().getFullYear() + 5 ? { ...candidate, ProductionYear: year } : candidate;
+      const year = premiereYear(candidate);
+      return year === undefined ? candidate : { ...candidate, ProductionYear: year };
     });
   }
   async apply(id, candidate) {
@@ -70,7 +74,10 @@ export class JellyfinService {
     const deadline = Date.now() + this.config.verifyTimeoutMs;
     while (Date.now() < deadline) {
       const item = await this.item(id), actual = new Map(providerEntries(item));
-      if (expected.every(([k, v]) => actual.get(k) === v) && normalizeName(item.Name) === normalizeName(candidate.Name) && (!candidate.ProductionYear || item.ProductionYear === candidate.ProductionYear)) return item;
+      const year = item.ProductionYear ?? (item.Type === 'Series' ? premiereYear(item) : undefined);
+      if (expected.every(([k, v]) => actual.get(k) === v) && normalizeName(item.Name) === normalizeName(candidate.Name) && (!candidate.ProductionYear || year === candidate.ProductionYear)) {
+        return year === undefined ? item : { ...item, ProductionYear: year };
+      }
       await sleep(this.config.pollMs);
     }
     throw new AppError('媒体信息回读确认超时，尚未确认所选元数据', 504);
