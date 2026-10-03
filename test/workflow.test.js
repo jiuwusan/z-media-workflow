@@ -40,13 +40,42 @@ test('ambiguous candidates are preserved without auto apply and partial errors r
   deps.jellyfin.search = async () => [candidate, { ...candidate, ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }];
   const result = await done(workflow, workflow.enqueue({})); assert.equal(result.status, 'needs_review'); assert.equal(result.items[1].status, 'failed'); assert.equal(result.items[0].candidates.length, 2); assert.deepEqual(events, ['scan']);
 });
-test('media scope excludes other libraries and locates Series for downloaded season episode', async () => {
+test('media scope locates Series for downloaded season episode and rejects unknown libraries', async () => {
   const jelly = { libraries: async () => [{ ItemId: 's', CollectionType: 'tvshows', Locations: ['/media/series'] }, { ItemId: 'l', CollectionType: 'movies', Locations: ['/media/movies'] }], items: async query => query.ParentId === 's' ? [{ Id: 'series', Type: 'Series', Path: '/media/series/三体', ProviderIds: {} }] : [movie] };
   const lib = new MediaLibraryService({ ...config, pathMapping: { from: '/downloads', to: '/media' } }, jelly);
   const matches = await lib.forTorrent({ save_path: '/downloads/series' }, [{ name: '三体/Season 01/S01E01.mkv' }]);
   assert.equal(matches.items.length, 1); assert.equal(matches.items[0].Id, 'series'); assert.deepEqual(matches.missingPaths, []);
   assert.deepEqual((await lib.unidentified({ libraryId: 's' })).items.map(i => i.Id), ['series']);
   await assert.rejects(lib.unidentified({ libraryId: 'unknown' }), /媒体库/);
+});
+
+test('library discovery follows additions and deletions and ignores legacy fixed library IDs', async () => {
+  const original = { ItemId: 's', CollectionType: 'tvshows', Locations: ['/media/series'] };
+  const addedSeries = { ItemId: 'new-series', CollectionType: 'tvshows', Locations: ['/media/pure-series'] };
+  const addedMovie = { ItemId: 'new-movies', CollectionType: 'movies', Locations: ['/media/new-movies'] };
+  const unsupported = [{ ItemId: 'music', CollectionType: 'music' }, { ItemId: 'mixed' }];
+  let libraries = [original, ...unsupported];
+  const queries = [];
+  const jellyfin = {
+    libraries: async () => libraries,
+    items: async query => {
+      queries.push(query);
+      return [{ Id: query.ParentId, Type: query.IncludeItemTypes, Path: `${libraries.find(l => l.ItemId === query.ParentId).Locations[0]}/media.mkv`, ProviderIds: {} }];
+    }
+  };
+  const service = new MediaLibraryService(config, jellyfin);
+  assert.deepEqual((await service.libraries()).map(l => l.ItemId), ['s']);
+  libraries = [original, addedSeries, addedMovie, ...unsupported];
+  assert.deepEqual((await service.libraries()).map(l => l.ItemId), ['s', 'new-series', 'new-movies']);
+  assert.equal((await service.unidentified()).total, 3);
+  const matches = await service.forTorrent({ save_path: '/media/pure-series' }, [{ name: 'media.mkv' }]);
+  assert.deepEqual(matches.items.map(i => i.Id), ['new-series']); assert.deepEqual(matches.missingPaths, []);
+  assert.deepEqual((await service.unidentified({ type: 'Movie' })).items.map(i => i.Id), ['new-movies']);
+  libraries = [addedMovie, ...unsupported]; queries.length = 0;
+  assert.deepEqual((await service.unidentified()).items.map(i => i.Id), ['new-movies']);
+  assert.deepEqual(queries.map(q => q.ParentId), ['new-movies']);
+  await assert.rejects(service.unidentified({ libraryId: 'new-series' }), /媒体库/);
+  await assert.rejects(service.unidentified({ libraryId: 'music' }), /媒体库/);
 });
 
 test('retry re-verifies failed applied candidate even when provider IDs already exist', async () => {

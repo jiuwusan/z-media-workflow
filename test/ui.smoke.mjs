@@ -8,6 +8,7 @@ import { createServices } from '../src/service/index.js';
 import { createApp } from '../src/app.js';
 test('panel login, RSS rules, preview, manual confirmation, responsive navigation and logout', { timeout: 90000 }, async t => {
   const libId = '1'.repeat(32), itemId = '2'.repeat(32), changes = [], errors = [];
+  const libraryList = [{ Name: 'movie', ItemId: libId, CollectionType: 'movies', Locations: ['/media/movies'] }];
   let scan = 0, applied = null, rules = {}, notification = { autorun_enabled: false, autorun_program: '' };
   const item = () => ({ Id: itemId, Type: 'Movie', Name: applied?.Name ?? 'Dune.2021.1080p', ProductionYear: applied?.ProductionYear, Path: '/media/movies/Dune.2021.1080p.mkv', ProviderIds: applied?.ProviderIds ?? {} });
   const upstream = createServer(async (req, res) => {
@@ -22,11 +23,11 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
     if (route === '/qbt/api/v2/torrents/categories') return json({ movies: { name: 'movies', savePath: '/media/movies' }, series: { name: 'series', savePath: '/media/series' } });
     if (route === '/qbt/api/v2/rss/removeRule') { delete rules[new URLSearchParams(raw).get('ruleName')]; changes.push('remove-rule'); res.end(''); return; }
     if (route === '/qbt/api/v2/rss/setRule') { const form = new URLSearchParams(raw); rules[form.get('ruleName')] = JSON.parse(form.get('ruleDef')); changes.push('rule'); res.end(''); return; }
-    if (route === '/jelly/Library/VirtualFolders') return json([{ Name: 'movie', ItemId: libId, CollectionType: 'movies', Locations: ['/media/movies'] }]);
+    if (route === '/jelly/Library/VirtualFolders') return json(libraryList);
     if (route === '/jelly/System/Info') return json({ Version: '10.11.11' });
     if (route === '/jelly/ScheduledTasks') return json([{ Id: 'scan-task', Key: 'RefreshLibrary', State: 'Idle', LastExecutionResult: { EndTimeUtc: `end-${scan}`, Status: 'Completed' } }]);
     if (route === '/jelly/Library/Refresh') { scan++; res.end(''); return; }
-    if (route === '/jelly/Items') return json({ Items: [item()], TotalRecordCount: 1 });
+    if (route === '/jelly/Items') return json(url.searchParams.get('ParentId') === '3'.repeat(32) ? { Items: [], TotalRecordCount: 0 } : { Items: [item()], TotalRecordCount: 1 });
     if (route === '/jelly/Items/RemoteSearch/Movie') return json([{ Name: 'Dune', ProductionYear: 2021, ProviderIds: { Tmdb: '438631' } }]);
     if (route === `/jelly/Items/RemoteSearch/Apply/${itemId}`) { applied = JSON.parse(raw); changes.push('apply'); res.end(''); return; }
     if (route === '/deep/models') return json({ data: [{ id: 'deepseek-flash' }] });
@@ -72,6 +73,13 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByRole('button', { name: '删除', exact: true }).click(); await page.getByRole('button', { name: '删除', exact: true }).last().click();
   await page.getByText('下载规则已删除', { exact: true }).waitFor(); assert.deepEqual(rules, {});
   await page.getByRole('link', { name: '媒体识别', exact: true }).click(); await page.getByText('Dune.2021.1080p', { exact: true }).waitFor();
+  libraryList.push({ Name: 'pure', ItemId: '3'.repeat(32), CollectionType: 'tvshows', Locations: ['/media/pure'] });
+  await page.getByRole('button', { name: '刷新列表', exact: true }).click();
+  await page.getByRole('combobox', { name: '目标媒体库' }).locator('xpath=ancestor::div[contains(@class,"el-select__wrapper")]').click(); await page.getByRole('option', { name: 'pure', exact: true }).click();
+  await page.getByText('当前没有未识别媒体。新下载入库后可再次检查。', { exact: true }).waitFor();
+  libraryList.pop(); await page.getByRole('button', { name: '刷新列表', exact: true }).click();
+  await page.getByText('Dune.2021.1080p', { exact: true }).waitFor();
+  assert.equal(await page.locator('.el-select__selected-item').getByText('全部目标库', { exact: true }).count(), 1);
   await page.getByRole('button', { name: '预览候选', exact: true }).click(); await page.getByRole('button', { name: '确认此候选' }).waitFor();
   assert.equal(applied, null); await page.getByRole('textbox', { name: '搜索媒体名称' }).fill('Dune');
   await page.getByRole('button', { name: '重新搜索' }).click(); await page.getByRole('button', { name: '确认此候选' }).waitFor();

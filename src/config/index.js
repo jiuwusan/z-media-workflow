@@ -25,7 +25,6 @@ export function loadConfig(env = process.env) {
     jellyfinUrl: url('JELLYFIN_URL', 'http://localhost:8096/'), jellyfinKey: required('JELLYFIN_API_KEY'),
     deepseekUrl: url('DEEPSEEK_URL', 'https://api.deepseek.com/'), deepseekKey: required('DEEPSEEK_API_KEY'), deepseekModel: env.DEEPSEEK_MODEL ?? 'deepseek-flash',
     adminUsername, adminPassword, workflowToken, webhookAuthRequired, sessionMs: number('SESSION_TTL_MS', 8 * 3600000),
-    seriesLibraryId: env.JELLYFIN_SERIES_LIBRARY_ID ?? '', movieLibraryId: env.JELLYFIN_MOVIE_LIBRARY_ID ?? '',
     pathMapping: { from: env.QBT_PATH_PREFIX ?? '', to: env.JELLYFIN_PATH_PREFIX ?? '' },
     requestTimeoutMs: number('REQUEST_TIMEOUT_MS', 15000), pollMs: number('POLL_INTERVAL_MS', 2000),
     scanTimeoutMs: number('SCAN_TIMEOUT_MS', 600000), verifyTimeoutMs: number('VERIFY_TIMEOUT_MS', 120000),

@@ -104,7 +104,9 @@ QBT_PATH_PREFIX=/downloads
 JELLYFIN_PATH_PREFIX=/MediasVol3
 ```
 
-库 ID 可在面板“连接与通知”中查看，分别配置 `JELLYFIN_SERIES_LIBRARY_ID`、`JELLYFIN_MOVIE_LIBRARY_ID`。配置 ID 时仅处理指定库；留空则处理相应类型的库，始终排除 musicvideos 等其他类型。
+服务在每次查询和识别时动态读取 Jellyfin 当前全部电影、剧集库：新增库自动纳入，删除库自动排除，始终排除音乐、混合库等其他类型。无需填写媒体库 ID；旧的 `JELLYFIN_SERIES_LIBRARY_ID`、`JELLYFIN_MOVIE_LIBRARY_ID` 即使仍在环境变量中也不再限制范围。面板“刷新列表”会同步更新库选项；已选择的库被删除时回到全部目标库。
+
+动态发现库不会单独触发识别任务。存量未识别媒体可在“媒体识别”中启动识别；新下载由 qBittorrent 下载完成回调触发，按下载路径定位当前库内对应媒体。
 
 ## qBittorrent 下载完成通知
 

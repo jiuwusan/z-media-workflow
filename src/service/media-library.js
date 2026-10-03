@@ -5,13 +5,13 @@ export class MediaLibraryService {
   constructor(config, jellyfin) { this.config = config; this.jellyfin = jellyfin; }
   async libraries() {
     const all = await this.jellyfin.libraries();
-    return all.filter(lib => (lib.CollectionType === 'tvshows' && (!this.config.seriesLibraryId || lib.ItemId === this.config.seriesLibraryId)) || (lib.CollectionType === 'movies' && (!this.config.movieLibraryId || lib.ItemId === this.config.movieLibraryId)));
+    return all.filter(lib => ['tvshows', 'movies'].includes(lib.CollectionType));
   }
   async scopedItems({ libraryId, type, itemIds } = {}) {
     let libraries = await this.libraries();
     if (libraryId) {
       libraries = libraries.filter(l => l.ItemId === libraryId);
-      if (!libraries.length) throw new AppError('该媒体库不在配置的电影/电视剧范围内');
+      if (!libraries.length) throw new AppError('该媒体库已删除或不属于电影/电视剧类型');
     }
     if (type) libraries = libraries.filter(l => l.CollectionType === (type === 'Movie' ? 'movies' : 'tvshows'));
     const items = (await Promise.all(libraries.map(async lib => (await this.jellyfin.items({ ParentId: lib.ItemId, IncludeItemTypes: lib.CollectionType === 'movies' ? 'Movie' : 'Series' })).filter(i => lib.Locations?.some(root => containsPath(root, i.Path))).map(i => ({ ...i, LibraryId: lib.ItemId }))))).flat();
