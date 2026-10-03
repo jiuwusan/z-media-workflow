@@ -10,7 +10,7 @@ import { redact, log } from './util/logger.js';
 export function createApp({ config, services = createServices(config) }) {
   services.auth ??= new AuthService(config);
   const app = new Koa(); app.proxy = config.trustProxy;
-  const secrets = [config.qbtKey, config.jellyfinKey, config.deepseekKey, config.adminToken, config.workflowToken];
+  const secrets = [config.qbtKey, config.jellyfinKey, config.deepseekKey, config.adminPassword, config.workflowToken];
   app.use(async (ctx, next) => {
     ctx.set('X-Content-Type-Options', 'nosniff'); ctx.set('X-Frame-Options', 'DENY'); ctx.set('Referrer-Policy', 'same-origin');
     ctx.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'");

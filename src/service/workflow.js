@@ -6,7 +6,7 @@ import { log, redact } from '../util/logger.js';
 export class WorkflowService {
   constructor(config, services) {
     this.config = config; this.services = services; this.jobs = new Map(); this.recoveries = new Map(); this.queue = []; this.running = false; this.stopping = false;
-    this.secrets = [config.qbtKey, config.jellyfinKey, config.deepseekKey, config.adminToken, config.workflowToken];
+    this.secrets = [config.qbtKey, config.jellyfinKey, config.deepseekKey, config.adminPassword, config.workflowToken];
   }
   prune() {
     const terminal = [...this.jobs.values()].filter(j => !['queued', 'running', 'needs_review'].includes(j.status));

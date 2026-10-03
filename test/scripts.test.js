@@ -9,7 +9,7 @@ import { createApp } from '../src/app.js';
 test('curl config submits URL-encoded v1/v2 hashes with isolated webhook token', async t => {
   const webhookToken = 'curl-test-webhook-token-123456789';
   const inputs = [];
-  const config = { workflowToken: webhookToken, adminToken: 'curl-test-admin-token-123456789', sessionMs: 60000 };
+  const config = { workflowToken: webhookToken, adminUsername: 'admin', adminPassword: 'curl-test-password-123456789', sessionMs: 60000 };
   const server = createApp({ config, services: { workflow: { enqueue: input => { inputs.push(input); return { id: 'curl-job' }; } } } }).listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r)); t.after(() => server.close());
   const template = await readFile('scripts/notify-completed.curl.example', 'utf8');

@@ -12,7 +12,8 @@ services:
       WEBHOOK_AUTH_ENABLED: ${WEBHOOK_AUTH_ENABLED:-false}
       HOST: 0.0.0.0
       PORT: 3000
-      PUBLIC_URL: ${DOCKER_PUBLIC_URL:-http://172.29.0.1:30001/}
+      PUBLIC_URL: ${DOCKER_PUBLIC_URL:-http://localhost:30001/}
+      WORKFLOW_CALLBACK_URL: ${WORKFLOW_CALLBACK_URL:-http://172.29.0.1:30001/api/webhooks/qbittorrent/completed}
       TZ: Asia/Shanghai
     ports:
       - '${DOCKER_HOST_PORT:-30001}:3000'

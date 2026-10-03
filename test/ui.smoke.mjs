@@ -33,7 +33,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   }).listen(0, '127.0.0.1');
   await new Promise(r => upstream.once('listening', r)); t.after(() => upstream.close());
   const base = `http://127.0.0.1:${upstream.address().port}`;
-  const config = loadConfig({ ADMIN_API_TOKEN: 'admin-browser-test-token-123456', WEBHOOK_AUTH_ENABLED: 'false', QBT_URL: `${base}/qbt/`, QBT_API_KEY: 'mock-qbt', JELLYFIN_URL: `${base}/jelly/`, JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_URL: `${base}/deep/`, DEEPSEEK_API_KEY: 'mock-deep', POLL_INTERVAL_MS: '5', SCAN_TIMEOUT_MS: '1000', VERIFY_TIMEOUT_MS: '1000', JELLYFIN_MOVIE_LIBRARY_ID: libId });
+  const config = loadConfig({ ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'browser-test-password-123456', WEBHOOK_AUTH_ENABLED: 'false', QBT_URL: `${base}/qbt/`, QBT_API_KEY: 'mock-qbt', JELLYFIN_URL: `${base}/jelly/`, JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_URL: `${base}/deep/`, DEEPSEEK_API_KEY: 'mock-deep', POLL_INTERVAL_MS: '5', SCAN_TIMEOUT_MS: '1000', VERIFY_TIMEOUT_MS: '1000', JELLYFIN_MOVIE_LIBRARY_ID: libId });
   const services = createServices(config), server = createApp({ config, services }).listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r)); t.after(() => server.close()); config.publicUrl = `http://127.0.0.1:${server.address().port}/`;
   let executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
@@ -41,7 +41,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on('pageerror', e => errors.push(e.message));
-  await page.goto(config.publicUrl); await page.getByRole('textbox', { name: '管理令牌', exact: true }).fill(config.adminToken);
+  await page.goto(config.publicUrl); await page.getByRole('textbox', { name: '用户名', exact: true }).fill(config.adminUsername); await page.getByRole('textbox', { name: '密码', exact: true }).fill(config.adminPassword);
   await page.getByRole('button', { name: '进入管理面板' }).click(); await page.getByRole('heading', { name: '工作流概览', exact: true }).waitFor();
   await page.getByRole('button', { name: '检查连接' }).click(); await page.getByText('在线', { exact: true }).first().waitFor();
   await mkdir('.test-artifacts', { recursive: true }); await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: '.test-artifacts/dashboard-desktop.png', fullPage: true });

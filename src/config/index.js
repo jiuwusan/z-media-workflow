@@ -13,15 +13,18 @@ export function loadConfig(env = process.env) {
   };
   const required = key => { if (!env[key]) throw new AppError(`请设置 ${key}`); return env[key]; };
   const webhookAuthRequired = env.WEBHOOK_AUTH_ENABLED !== 'false';
-  const adminToken = required('ADMIN_API_TOKEN'), workflowToken = webhookAuthRequired ? required('WORKFLOW_API_TOKEN') : (env.WORKFLOW_API_TOKEN ?? '');
-  if (adminToken.length < 24 || (webhookAuthRequired && (workflowToken.length < 24 || adminToken === workflowToken))) throw new AppError('管理和回调令牌需分别设置为至少 24 位的不同值');
+  const adminUsername = required('ADMIN_USERNAME'), adminPassword = required('ADMIN_PASSWORD');
+  if (adminUsername.length > 128 || adminPassword.length > 1024) throw new AppError('管理员用户名或密码长度无效');
+  const workflowToken = webhookAuthRequired ? required('WORKFLOW_API_TOKEN') : (env.WORKFLOW_API_TOKEN ?? '');
+  if (webhookAuthRequired && workflowToken.length < 24) throw new AppError('回调令牌需至少 24 位');
   return {
     host: env.HOST ?? '127.0.0.1', port: number('PORT', 30001, 1, 65535),
     publicUrl: url('PUBLIC_URL', 'http://localhost:30001/'), devOrigin: env.NODE_ENV !== 'production' ? (env.DEV_ORIGIN ?? 'http://localhost:5173') : undefined, secureCookie: env.COOKIE_SECURE === 'true', trustProxy: env.TRUST_PROXY === 'true',
+    callbackUrl: env.WORKFLOW_CALLBACK_URL ? url('WORKFLOW_CALLBACK_URL').replace(/\/$/, '') : undefined,
     qbtUrl: url('QBT_URL', 'http://localhost:8080/'), qbtKey: required('QBT_API_KEY'),
     jellyfinUrl: url('JELLYFIN_URL', 'http://localhost:8096/'), jellyfinKey: required('JELLYFIN_API_KEY'),
     deepseekUrl: url('DEEPSEEK_URL', 'https://api.deepseek.com/'), deepseekKey: required('DEEPSEEK_API_KEY'), deepseekModel: env.DEEPSEEK_MODEL ?? 'deepseek-flash',
-    adminToken, workflowToken, webhookAuthRequired, sessionMs: number('SESSION_TTL_MS', 8 * 3600000),
+    adminUsername, adminPassword, workflowToken, webhookAuthRequired, sessionMs: number('SESSION_TTL_MS', 8 * 3600000),
     seriesLibraryId: env.JELLYFIN_SERIES_LIBRARY_ID ?? '', movieLibraryId: env.JELLYFIN_MOVIE_LIBRARY_ID ?? '',
     pathMapping: { from: env.QBT_PATH_PREFIX ?? '', to: env.JELLYFIN_PATH_PREFIX ?? '' },
     requestTimeoutMs: number('REQUEST_TIMEOUT_MS', 15000), pollMs: number('POLL_INTERVAL_MS', 2000),
