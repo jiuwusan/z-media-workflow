@@ -119,7 +119,7 @@ test('disabled webhook auth does not require a workflow token; enabled auth stil
 
 test('browser login origin and container callback address can differ', async t => {
   const { req, config, login } = await setup(t);
-  config.callbackUrl = 'http://172.29.0.1:30001/api/webhooks/qbittorrent/completed';
+  config.callbackUrl = 'http://172.29.0.1:3000/api/webhooks/qbittorrent/completed';
   const r = await req('/api/dashboard', { headers: await login() });
   assert.equal((await r.json()).data.callbackUrl, config.callbackUrl);
 });

@@ -15,7 +15,7 @@ test('curl config submits URL-encoded v1/v2 hashes with isolated webhook token',
   const template = await readFile('scripts/notify-completed.curl.example', 'utf8');
   await mkdir('.test-artifacts', { recursive: true });
   const path = resolve(`.test-artifacts/curl-notify-${process.pid}.config`);
-  await writeFile(path, template.replace('http://172.29.0.1:30001/api/webhooks/qbittorrent/completed', `http://127.0.0.1:${server.address().port}/api/webhooks/qbittorrent/completed`).replace('replace-with-the-server-workflow-token', webhookToken));
+  await writeFile(path, template.replace('http://172.29.0.1:3000/api/webhooks/qbittorrent/completed', `http://127.0.0.1:${server.address().port}/api/webhooks/qbittorrent/completed`).replace('replace-with-the-server-workflow-token', webhookToken));
   t.after(() => unlink(path));
   async function call(hash) {
     const child = spawn(process.platform === 'win32' ? 'curl.exe' : 'curl', ['-q', '--config', path, '--data-urlencode', `hash=${hash}`]);

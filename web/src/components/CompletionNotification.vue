@@ -7,7 +7,7 @@ const form = ref({ enabled: false, program: '' });
 const loaded = ref(false), loading = ref(false), saving = ref(false), error = ref('');
 const platform = ref('curl'), scriptPath = ref('/config/z-media-workflow/.env.notify.curl');
 const envTemplate = computed(() => {
-  const url = props.callbackUrl || 'http://172.29.0.1:30001/api/webhooks/qbittorrent/completed';
+  const url = props.callbackUrl || 'http://172.29.0.1:3000/api/webhooks/qbittorrent/completed';
   return platform.value === 'curl'
     ? `url = "${url}"\nrequest = "POST"\nheader = "Authorization: Bearer 填入服务端独立WORKFLOW_API_TOKEN"\nsilent\nshow-error\nfail\nconnect-timeout = 5\nmax-time = 15\nretry = 2\nretry-delay = 1\nretry-max-time = 45\nretry-connrefused`
     : `WORKFLOW_CALLBACK_URL=${url}\nWORKFLOW_API_TOKEN=填入服务端独立WORKFLOW_API_TOKEN`;
@@ -15,7 +15,7 @@ const envTemplate = computed(() => {
 function changePlatform(value) { scriptPath.value = value === 'curl' ? '/config/z-media-workflow/.env.notify.curl' : value === 'windows' ? 'E:\\personal\\z-media-workflow\\scripts\\notify-completed.mjs' : '/opt/z-media-workflow/scripts/notify-completed.mjs'; }
 function generate() {
   if (platform.value === 'curl' && !props.authRequired) {
-    const url = props.callbackUrl || 'http://172.29.0.1:30001/api/webhooks/qbittorrent/completed';
+    const url = props.callbackUrl || 'http://172.29.0.1:3000/api/webhooks/qbittorrent/completed';
     form.value.program = `curl -q --fail --silent --show-error --connect-timeout 5 --max-time 15 --retry 2 --retry-connrefused --data-urlencode "hash=%I" "${url}"`;
     return;
   }
