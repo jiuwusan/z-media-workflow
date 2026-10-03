@@ -35,18 +35,34 @@ async function setup(t) {
   };
   return { req, base, config, services, login };
 }
-test('admin cookie protects writes with Origin and CSRF; logout invalidates session', async t => {
+test('admin cookie protects writes with CSRF; logout invalidates session', async t => {
   const { req, base } = await setup(t);
   let r = await req('/api/workflows'); assert.equal(r.status, 401);
   r = await req('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username: 'admin', password: 'correct-test-password-123' }) }); assert.equal(r.status, 200);
   const cookie = r.headers.get('set-cookie').split(';')[0], csrf = (await r.json()).data.csrfToken;
   r = await req('/api/workflows', { headers: { Cookie: cookie } }); assert.equal(r.status, 200);
   r = await req('/api/workflows/scan', { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: '{}' }); assert.equal(r.status, 403);
-  r = await req('/api/workflows/scan', { method: 'POST', headers: { Cookie: cookie, Origin: 'https://evil.example', 'X-CSRF-Token': csrf, 'Content-Type': 'application/json' }, body: '{}' }); assert.equal(r.status, 403);
+  r = await req('/api/workflows/scan', { method: 'POST', headers: { Cookie: cookie, Origin: 'http://192.168.50.182:3000', 'X-CSRF-Token': 'wrong-csrf', 'Content-Type': 'application/json' }, body: '{}' }); assert.equal(r.status, 403);
   const headers = { Cookie: cookie, Origin: base, 'X-CSRF-Token': csrf, 'Content-Type': 'application/json' };
   r = await req('/api/workflows/scan', { method: 'POST', headers, body: '{"dryRun":true}' }); assert.equal(r.status, 202);
   r = await req('/api/auth/logout', { method: 'POST', headers }); assert.equal(r.status, 200);
   assert.equal((await req('/api/workflows', { headers: { Cookie: cookie } })).status, 401);
+});
+
+test('login and authenticated writes accept any Origin or no Origin while credentials and CSRF remain required', async t => {
+  const { req, config } = await setup(t);
+  for (const origin of ['http://192.168.50.182:3000', 'https://media.example.com', undefined]) {
+    const headers = { 'Content-Type': 'application/json', ...(origin ? { Origin: origin } : {}) };
+    const login = password => req('/api/auth/login', { method: 'POST', headers, body: JSON.stringify({ username: config.adminUsername, password }) });
+    assert.equal((await login('wrong-password')).status, 401);
+    const r = await login(config.adminPassword); assert.equal(r.status, 200);
+    const cookie = r.headers.get('set-cookie').split(';')[0], csrf = (await r.json()).data.csrfToken;
+    const write = extra => req('/api/workflows/scan', { method: 'POST', headers: { ...headers, ...extra }, body: '{"dryRun":true}' });
+    assert.equal((await write({ 'X-CSRF-Token': csrf })).status, 401);
+    assert.equal((await write({ Cookie: cookie })).status, 403);
+    assert.equal((await write({ Cookie: cookie, 'X-CSRF-Token': 'wrong-csrf' })).status, 403);
+    assert.equal((await write({ Cookie: cookie, 'X-CSRF-Token': csrf })).status, 202);
+  }
 });
 test('webhook token cannot manage RSS; callbacks validate hash and do not accept admin token', async t => {
   const { req } = await setup(t);

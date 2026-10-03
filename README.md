@@ -16,7 +16,7 @@ npm start
 
 打开 http://localhost:3000，使用 `.env` 的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 登录。当前调试环境已写入被 Git 忽略的 `.env`，管理员密码和回调令牌分别配置；不在文档或构建产物中记录真实令牌。
 
-开发时分别运行 `npm run dev` 与 `npm run dev:web`，打开 http://localhost:5173。默认 DEV_ORIGIN 允许该来源；改端口时同步调整 `.env`。生产配置 `NODE_ENV=production`、实际 `PUBLIC_URL`，HTTPS 时设置 `COOKIE_SECURE=true`；代理部署时按环境设置 `TRUST_PROXY`。面板与 API 使用同源部署。
+开发时分别运行 `npm run dev` 与 `npm run dev:web`，打开 http://localhost:5173。生产配置 `NODE_ENV=production`、实际 `PUBLIC_URL`，HTTPS 时设置 `COOKIE_SECURE=true`；代理部署时按环境设置 `TRUST_PROXY`。面板与 API 使用同源部署。
 
 管理账号使用环境配置，无需数据库：
 
@@ -27,7 +27,7 @@ ADMIN_PASSWORD=填写管理员密码
 
 旧的 `ADMIN_API_TOKEN` 已停用。登录接口接受 `{ "username", "password" }`，成功后创建 HttpOnly 会话，密码使用 scrypt 比对；错误的用户名或密码返回相同提示，保留登录尝试限制。修改账号或密码后重启服务，旧会话失效。下载回调是否校验 token 仍由 `WEBHOOK_AUTH_ENABLED` 独立控制。
 
-`PUBLIC_URL`（Docker 中为 `DOCKER_PUBLIC_URL`）填写浏览器访问管理面板的地址，用于登录来源校验；`WORKFLOW_CALLBACK_URL` 可单独设置为 qBittorrent 容器可达的回调地址，当前为 `http://172.29.0.1:3000/api/webhooks/qbittorrent/completed`。未指定回调地址时从 `PUBLIC_URL` 推导。
+登录及管理 API 不限制请求的 Origin，允许通过内网 IP、域名或 localhost 访问；登录仍需用户名/密码，管理操作仍需会话及 CSRF 校验。旧的 `DEV_ORIGIN` 环境变量不再使用。`PUBLIC_URL`（Docker 中为 `DOCKER_PUBLIC_URL`）用于推导默认回调地址，不再用于限制登录来源；`WORKFLOW_CALLBACK_URL` 可单独设置为 qBittorrent 容器可达的回调地址，当前为 `http://172.29.0.1:3000/api/webhooks/qbittorrent/completed`。未指定回调地址时从 `PUBLIC_URL` 推导。
 
 ## Docker Compose 部署
 

@@ -19,7 +19,7 @@ export function loadConfig(env = process.env) {
   if (webhookAuthRequired && workflowToken.length < 24) throw new AppError('回调令牌需至少 24 位');
   return {
     host: env.HOST ?? '127.0.0.1', port: number('PORT', 3000, 1, 65535),
-    publicUrl: url('PUBLIC_URL', 'http://localhost:3000/'), devOrigin: env.NODE_ENV !== 'production' ? (env.DEV_ORIGIN ?? 'http://localhost:5173') : undefined, secureCookie: env.COOKIE_SECURE === 'true', trustProxy: env.TRUST_PROXY === 'true',
+    publicUrl: url('PUBLIC_URL', 'http://localhost:3000/'), secureCookie: env.COOKIE_SECURE === 'true', trustProxy: env.TRUST_PROXY === 'true',
     callbackUrl: env.WORKFLOW_CALLBACK_URL ? url('WORKFLOW_CALLBACK_URL').replace(/\/$/, '') : undefined,
     qbtUrl: url('QBT_URL', 'http://localhost:8080/'), qbtKey: required('QBT_API_KEY'),
     jellyfinUrl: url('JELLYFIN_URL', 'http://localhost:8096/'), jellyfinKey: required('JELLYFIN_API_KEY'),

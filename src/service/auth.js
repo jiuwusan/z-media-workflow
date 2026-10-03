@@ -30,17 +30,12 @@ export class AuthService {
   }
   session(id) { this.prune(); return this.sessions.get(id); }
   logout(id) { this.sessions.delete(id); }
-  checkOrigin(ctx) {
-    const allowed = [new URL(this.config.publicUrl).origin, this.config.devOrigin].filter(Boolean);
-    if (!allowed.includes(ctx.get('Origin'))) throw new AppError('请求来源不被允许', 403);
-  }
   authenticate(ctx, webhook = false) {
     const auth = ctx.get('Authorization'), bearer = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
     if (webhook) { if (this.config.webhookAuthRequired === false) return; if (!tokenEquals(bearer, this.config.workflowToken)) throw new AppError('下载通知认证失败', 401); return; }
     const session = this.session(ctx.cookies.get('media_session', { signed: false }));
     if (!session) throw new AppError('请登录管理面板', 401);
     if (!['GET', 'HEAD', 'OPTIONS'].includes(ctx.method)) {
-      this.checkOrigin(ctx);
       if (!tokenEquals(ctx.get('X-CSRF-Token'), session.csrfToken)) throw new AppError('CSRF 校验失败', 403);
     }
     ctx.state.session = session;
