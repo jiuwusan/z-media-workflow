@@ -14,20 +14,20 @@ npm run build
 npm start
 ```
 
-打开 http://localhost:3000，使用 `.env` 的 `ADMIN_API_TOKEN` 登录。当前调试环境已写入被 Git 忽略的 `.env`，管理和回调令牌分别随机生成；不在文档或构建产物中记录真实令牌。
+打开 http://localhost:30001，使用 `.env` 的 `ADMIN_API_TOKEN` 登录。当前调试环境已写入被 Git 忽略的 `.env`，管理和回调令牌分别随机生成；不在文档或构建产物中记录真实令牌。
 
 开发时分别运行 `npm run dev` 与 `npm run dev:web`，打开 http://localhost:5173。默认 DEV_ORIGIN 允许该来源；改端口时同步调整 `.env`。生产配置 `NODE_ENV=production`、实际 `PUBLIC_URL`，HTTPS 时设置 `COOKIE_SECURE=true`；代理部署时按环境设置 `TRUST_PROXY`。面板与 API 使用同源部署。
 
 ## Docker Compose 部署
 
-参考 `senior-buyer`，使用 `jiuwusan/z-media-workflow:latest` 镜像、外部 `wk` 网络和 `restart: always`。镜像基于 Node.js 22，分阶段构建 Vue 面板及后端生产依赖，由非 root 用户运行 Koa，内置 `/health` 健康检查。管理面板和 API 共用一个容器，宿主机默认端口为 **37073**。
+参考 `senior-buyer`，使用 `jiuwusan/z-media-workflow:latest` 镜像、外部 `wk` 网络和 `restart: always`。镜像基于 Node.js 22，分阶段构建 Vue 面板及后端生产依赖，由非 root 用户运行 Koa，内置 `/health` 健康检查。管理面板和 API 共用一个容器，宿主机默认端口为 **30001**。
 
 在部署机器安装 Docker Engine / Docker Desktop 和 Compose v2，复制项目代码。首次部署将 `.env.example` 复制为 `.env` 并填写各服务密钥、管理令牌及回调令牌；已有 `.env` 时保留配置。在 `.env` 中追加或调整：
 
 ```dotenv
 DOCKER_IMAGE=jiuwusan/z-media-workflow:latest
-DOCKER_HOST_PORT=37073
-DOCKER_PUBLIC_URL=http://你的服务器地址:37073/
+DOCKER_HOST_PORT=30001
+DOCKER_PUBLIC_URL=http://你的服务器地址:30001/
 DOCKER_STOP_GRACE_PERIOD=35s
 ```
 
@@ -45,7 +45,7 @@ docker compose ps
 docker compose logs -f --tail=100
 ```
 
-打开 `http://你的服务器地址:37073/`，使用 `.env` 的 `ADMIN_API_TOKEN` 登录。qBittorrent 完成通知脚本的 `WORKFLOW_CALLBACK_URL` 填 `http://你的服务器地址:37073/api/webhooks/qbittorrent/completed`；如果 qBittorrent 容器也在 `wk` 网络，可用 `http://z-media-workflow:3000/api/webhooks/qbittorrent/completed`。通知脚本仍应在 qBittorrent 所在机器/容器运行。
+打开 `http://你的服务器地址:30001/`，使用 `.env` 的 `ADMIN_API_TOKEN` 登录。qBittorrent 完成通知脚本的 `WORKFLOW_CALLBACK_URL` 填 `http://你的服务器地址:30001/api/webhooks/qbittorrent/completed`；如果 qBittorrent 容器也在 `wk` 网络，可用 `http://z-media-workflow:3000/api/webhooks/qbittorrent/completed`。通知脚本仍应在 qBittorrent 所在机器/容器运行。
 
 更新代码后执行 `docker compose up -d --build`。查看三方连接可执行 `docker compose exec z-media-workflow npm run check:connections`。使用已发布镜像时执行 `docker compose pull` 和 `docker compose up -d --no-build`；本项目只配置镜像名，不会自动发布镜像。
 
@@ -84,10 +84,44 @@ JELLYFIN_PATH_PREFIX=/MediasVol3
 
 ## qBittorrent 下载完成通知
 
+在管理面板“连接与通知”中，可以读取 qBittorrent 当前的完成通知开关和命令、生成 Windows / Linux 命令模板、编辑后保存。保存只更新 `autorun_enabled` 与 `autorun_program`，并回读确认；生成模板不会自动保存。
+
+当前 qBittorrent 容器的回调地址为 `http://172.29.0.1:30001/api/webhooks/qbittorrent/completed`。服务须监听 `0.0.0.0`，Docker 发布端口为 `30001:3000`，其内部端口仍为 `3000`。容器已有 curl 时使用下面的 curl 配置，不需要 Node.js 或通知脚本。纯 v2 torrent 将命令中的 `%I` 改为 `%J`；不要使用 `%K`（Torrent ID）。
+
+### curl 通知（当前容器使用）
+
+当前内网部署设置 `WEBHOOK_AUTH_ENABLED=false`，仅取消下载完成回调的 token 校验，管理面板及管理 API 仍需认证。无需 `.env.notify.curl`，在“torrent 完成时运行”填写下面的单行命令，或在管理面板直接生成并保存：
+
+```text
+curl -q --fail --silent --show-error --connect-timeout 5 --max-time 15 --retry 2 --retry-connrefused --data-urlencode "hash=%I" "http://172.29.0.1:30001/api/webhooks/qbittorrent/completed"
+```
+
+`.env` 与 Compose 中均已设置内网模式。关闭回调认证时无需设置 `WORKFLOW_API_TOKEN`。需要恢复回调认证时设置 `WEBHOOK_AUTH_ENABLED=true`、填写独立回调令牌并重启服务，再使用下面的配置文件方式。直接运行 `npm start` 且没有指定该选项时，仍默认校验 token。
+
+#### 启用 token 校验时的 curl 配置（可选）
+
+复制 `scripts/notify-completed.curl.example` 为 **qBittorrent 容器内** `/config/z-media-workflow/.env.notify.curl`，将 `header` 中的占位值改为服务端 `.env` 的独立 `WORKFLOW_API_TOKEN`。已填写令牌的本地 `scripts/.env.notify.curl` 被 Git 忽略，部署时复制该文件即可。按实际持久化挂载修改路径，让 qBittorrent 运行用户可读，并设置 `chmod 600`。
+
+启用回调认证时，在管理面板选择“curl（无需 Node.js）”，填写上述配置文件路径，生成通知命令并保存启用。也可在截图对应的“torrent 完成时运行”中填写：
+
+```text
+curl -q --config "/config/z-media-workflow/.env.notify.curl" --data-urlencode "hash=%I"
+```
+
+令牌保存在配置文件中，不出现在完成命令或 curl 参数中。回调接口支持 URL 编码表单与原有 JSON；启用 curl 的失败状态检测、连接/请求超时和限量重试，HTTP 4xx/5xx 不会被误报为成功。不要给配置添加 `location`，避免向重定向目标转发请求。
+
+在容器内只读检查服务可达性：
+
+```sh
+curl -q --fail --show-error --connect-timeout 5 --max-time 15 http://172.29.0.1:30001/health
+```
+
+### Node.js 通知（可选）
+
 在 **qBittorrent 所在机器/容器** 部署 `scripts/notify-completed.mjs`（只依赖 Node.js 22+，无需安装 npm 包）。复制 `scripts/.env.notify.example` 为脚本同目录的 `.env.notify`，填入：
 
 ```dotenv
-WORKFLOW_CALLBACK_URL=http://workflow-host:3000/api/webhooks/qbittorrent/completed
+WORKFLOW_CALLBACK_URL=http://172.29.0.1:30001/api/webhooks/qbittorrent/completed
 WORKFLOW_API_TOKEN=服务端.env中的独立回调令牌
 ```
 
@@ -101,15 +135,17 @@ Windows：
 node "E:\personal\z-media-workflow\scripts\notify-completed.mjs" "%I"
 ```
 
-Linux / Docker（按实际路径调整）：
+Linux / Docker（容器有 Node.js 时，按实际路径调整）：
 
 ```text
 node /opt/z-media-workflow/scripts/notify-completed.mjs "%I"
 ```
 
-可选增加 `Movie` 或 `Series` 参数，仅当这套通知明确只用于一种媒体类型。混合下载通常无需参数，按入库条目识别类型。Docker 需确保容器内存在 Node.js、脚本及配置，并能访问服务；宿主机 localhost 与容器 localhost 不等同。本项目不会自动修改远程 qBittorrent 完成命令或 RSS 规则。
+可选增加 `Movie` 或 `Series` 参数，仅当这套通知明确只用于一种媒体类型。混合下载通常无需参数，按入库条目识别类型。Docker 需确保容器内存在 Node.js、脚本及配置，并能访问服务；宿主机 localhost 与容器 localhost 不等同。通知命令和 RSS 规则只在面板明确保存时更新。
 
-脚本对网络/429/5xx 限量重试；API 对 hash 去重。hash 支持 v1 40 位或 v2 64 位十六进制。回调使用 WORKFLOW_API_TOKEN，不能操作管理 API；管理令牌不能调用下载回调。
+将 `scripts/notify-completed.mjs` 和配置好的 `.env.notify` 部署在 qBittorrent 容器同一目录，例如 `/opt/z-media-workflow/scripts/`，完成命令填写 `node "/opt/z-media-workflow/scripts/notify-completed.mjs" "%I"`。该路径是模板，需按实际挂载修改。只在工作流容器中放置脚本，无法让另一容器的 qBittorrent 执行它。启用后仅对后续下载完成事件生效；已完成媒体可在面板手动扫描。
+
+脚本对网络/429/5xx 限量重试；API 对 hash 去重。hash 支持 v1 40 位或 v2 64 位十六进制。启用回调认证时使用 WORKFLOW_API_TOKEN，不能操作管理 API；内网模式的下载回调不需要令牌，仍校验 hash 和媒体类型。
 
 ## API 与分层
 
@@ -130,6 +166,7 @@ scripts/          通知与只读联通检查
 | POST | `/api/auth/login`、`/api/auth/logout` | 管理会话登录/退出 |
 | GET | `/api/auth/session` | 会话和 CSRF token |
 | GET | `/api/dashboard` | 统计、目标库与脱敏配置 |
+| GET / PUT | `/api/qbittorrent/completion-notification` | 读取/保存下载完成通知 `{ enabled, program }` |
 | POST | `/api/connections/check` | 三方只读连接检查 |
 | GET | `/api/qbittorrent/rss` | 订阅树与文章 |
 | POST / DELETE | `/api/qbittorrent/rss/feeds` | 添加/删除订阅 |

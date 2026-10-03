@@ -8,13 +8,15 @@ import { createServices } from '../src/service/index.js';
 import { createApp } from '../src/app.js';
 test('panel login, RSS rules, preview, manual confirmation, responsive navigation and logout', { timeout: 90000 }, async t => {
   const libId = '1'.repeat(32), itemId = '2'.repeat(32), changes = [], errors = [];
-  let scan = 0, applied = null, rules = {};
+  let scan = 0, applied = null, rules = {}, notification = { autorun_enabled: false, autorun_program: '' };
   const item = () => ({ Id: itemId, Type: 'Movie', Name: applied?.Name ?? 'Dune.2021.1080p', ProductionYear: applied?.ProductionYear, Path: '/media/movies/Dune.2021.1080p.mkv', ProviderIds: applied?.ProviderIds ?? {} });
   const upstream = createServer(async (req, res) => {
     let raw = ''; for await (const d of req) raw += d;
     const url = new URL(req.url, 'http://mock'), route = url.pathname;
     const json = data => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data)); };
     if (route === '/qbt/api/v2/app/version') { res.end('v5.2.3'); return; }
+    if (route === '/qbt/api/v2/app/preferences') return json({ ...notification, mail_notification_password: 'secret-mail', autorun_on_torrent_added_enabled: true });
+    if (route === '/qbt/api/v2/app/setPreferences') { const update = JSON.parse(new URLSearchParams(raw).get('json')); assert.deepEqual(Object.keys(update).sort(), ['autorun_enabled', 'autorun_program']); notification = update; changes.push('notification'); res.end(''); return; }
     if (route === '/qbt/api/v2/rss/items') return json({ 剧集: { 测试订阅: { url: 'https://example.com/rss', articles: [{ title: 'Dune 2021', date: '2026-10-02T12:00:00Z', link: 'https://example.com/article' }] } } });
     if (route === '/qbt/api/v2/rss/rules') return json(rules);
     if (route === '/qbt/api/v2/rss/setRule') { const form = new URLSearchParams(raw); rules[form.get('ruleName')] = JSON.parse(form.get('ruleDef')); changes.push('rule'); res.end(''); return; }
@@ -31,7 +33,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   }).listen(0, '127.0.0.1');
   await new Promise(r => upstream.once('listening', r)); t.after(() => upstream.close());
   const base = `http://127.0.0.1:${upstream.address().port}`;
-  const config = loadConfig({ ADMIN_API_TOKEN: 'admin-browser-test-token-123456', WORKFLOW_API_TOKEN: 'webhook-browser-test-token-123456', QBT_URL: `${base}/qbt/`, QBT_API_KEY: 'mock-qbt', JELLYFIN_URL: `${base}/jelly/`, JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_URL: `${base}/deep/`, DEEPSEEK_API_KEY: 'mock-deep', POLL_INTERVAL_MS: '5', SCAN_TIMEOUT_MS: '1000', VERIFY_TIMEOUT_MS: '1000', JELLYFIN_MOVIE_LIBRARY_ID: libId });
+  const config = loadConfig({ ADMIN_API_TOKEN: 'admin-browser-test-token-123456', WEBHOOK_AUTH_ENABLED: 'false', QBT_URL: `${base}/qbt/`, QBT_API_KEY: 'mock-qbt', JELLYFIN_URL: `${base}/jelly/`, JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_URL: `${base}/deep/`, DEEPSEEK_API_KEY: 'mock-deep', POLL_INTERVAL_MS: '5', SCAN_TIMEOUT_MS: '1000', VERIFY_TIMEOUT_MS: '1000', JELLYFIN_MOVIE_LIBRARY_ID: libId });
   const services = createServices(config), server = createApp({ config, services }).listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r)); t.after(() => server.close()); config.publicUrl = `http://127.0.0.1:${server.address().port}/`;
   let executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
@@ -55,6 +57,19 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByRole('button', { name: '确认此候选' }).click(); await page.getByRole('button', { name: '确认并应用', exact: true }).click();
   await page.getByText('已确认：Dune', { exact: false }).waitFor(); assert.equal(applied.ProviderIds.Tmdb, '438631');
   await page.getByRole('link', { name: '连接与通知', exact: true }).click(); await page.getByRole('heading', { name: '下载完成通知' }).waitFor();
+  await page.getByRole('button', { name: '生成通知命令', exact: true }).click();
+  const completionCommand = await page.getByRole('textbox', { name: '完成通知命令', exact: true }).inputValue();
+  assert.match(completionCommand, /^curl -q --fail/);
+  assert.ok(completionCommand.includes(`--data-urlencode "hash=%I" "${config.publicUrl}api/webhooks/qbittorrent/completed"`));
+  assert.equal(completionCommand.includes('--config'), false);
+  assert.equal(await page.getByRole('textbox', { name: '通知文件路径' }).count(), 0);
+  assert.equal(notification.autorun_enabled, false, 'template generation does not save automatically');
+  await page.getByRole('switch', { name: '启用下载完成通知' }).locator('..').click();
+  await page.getByRole('button', { name: '保存通知配置', exact: true }).click();
+  await page.getByText('已保存到 qBittorrent，并回读确认', { exact: true }).waitFor();
+  assert.equal(notification.autorun_enabled, true);
+  await page.getByRole('button', { name: '读取 qBittorrent 配置', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[aria-label="启用下载完成通知"]').getAttribute('aria-checked') === 'true');
   await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '概览', exact: true }).click();
   await page.getByRole('heading', { name: '目标媒体库' }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -62,5 +77,5 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.waitForFunction(() => document.querySelectorAll('.el-message').length === 0);
   await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: '.test-artifacts/dashboard-mobile.png', fullPage: true });
   await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('button', { name: '退出登录' }).click(); await page.getByRole('heading', { name: '登录工作空间' }).waitFor();
-  assert.deepEqual(errors, []); assert.deepEqual(changes, ['rule', 'apply']);
+  assert.deepEqual(errors, []); assert.deepEqual(changes, ['rule', 'apply', 'notification']);
 });

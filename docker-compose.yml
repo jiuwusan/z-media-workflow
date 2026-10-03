@@ -9,12 +9,13 @@ services:
       - .env
     environment:
       NODE_ENV: production
+      WEBHOOK_AUTH_ENABLED: ${WEBHOOK_AUTH_ENABLED:-false}
       HOST: 0.0.0.0
       PORT: 3000
-      PUBLIC_URL: ${DOCKER_PUBLIC_URL:-http://localhost:37073/}
+      PUBLIC_URL: ${DOCKER_PUBLIC_URL:-http://172.29.0.1:30001/}
       TZ: Asia/Shanghai
     ports:
-      - '${DOCKER_HOST_PORT:-37073}:3000'
+      - '${DOCKER_HOST_PORT:-30001}:3000'
     restart: always
     init: true
     stop_grace_period: ${DOCKER_STOP_GRACE_PERIOD:-35s}

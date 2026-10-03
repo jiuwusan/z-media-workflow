@@ -1,0 +1,14 @@
+# Copy to .env.notify.curl in the qBittorrent container, then fill the token.
+# Completion command: curl -q --config "/config/z-media-workflow/.env.notify.curl" --data-urlencode "hash=%I"
+url = "http://172.29.0.1:30001/api/webhooks/qbittorrent/completed"
+request = "POST"
+header = "Authorization: Bearer replace-with-the-server-workflow-token"
+silent
+show-error
+fail
+connect-timeout = 5
+max-time = 15
+retry = 2
+retry-delay = 1
+retry-max-time = 45
+retry-connrefused

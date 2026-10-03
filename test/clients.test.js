@@ -5,6 +5,25 @@ import { DeepseekService } from '../src/service/deepseek.js';
 import { QbittorrentService } from '../src/service/qbittorrent.js';
 
 const task = (state, end, status = 'Completed') => ({ Id: 'scan', Key: 'RefreshLibrary', State: state, LastExecutionResult: end ? { EndTimeUtc: end, Status: status } : null });
+test('completion notification exposes only its settings and updates only native completion fields', async () => {
+  const prefs = { autorun_enabled: false, autorun_program: '', mail_notification_password: 'private', autorun_on_torrent_added_enabled: true, save_path: '/media' };
+  const qbt = new QbittorrentService({}, async (path, options) => {
+    if (path === 'app/preferences') return prefs;
+    assert.equal(path, 'app/setPreferences'); assert.equal(options.method, 'POST');
+    const update = JSON.parse(options.form.json);
+    assert.deepEqual(Object.keys(update).sort(), ['autorun_enabled', 'autorun_program']);
+    Object.assign(prefs, update);
+  });
+  assert.deepEqual(await qbt.completionNotification(), { enabled: false, program: '' });
+  assert.deepEqual(await qbt.setCompletionNotification({ enabled: true, program: 'node /opt/notify.mjs "%I"' }), { enabled: true, program: 'node /opt/notify.mjs "%I"' });
+  assert.equal(prefs.autorun_on_torrent_added_enabled, true); assert.equal(prefs.save_path, '/media');
+});
+
+test('completion notification reports upstream readback mismatch instead of claiming saved', async () => {
+  const qbt = new QbittorrentService({}, async path => path === 'app/preferences' ? { autorun_enabled: false, autorun_program: '' } : undefined);
+  await assert.rejects(qbt.setCompletionNotification({ enabled: true, program: 'node /opt/notify.mjs "%I"' }), /回读不一致/);
+});
+
 test('refresh waits through an existing scan and requires new execution after POST', async () => {
   let reads = 0, posts = 0;
   const states = [task('Running', 'old'), task('Idle', 'old'), task('Idle', 'old'), task('Idle', 'new')];

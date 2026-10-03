@@ -4,7 +4,7 @@ export function systemController(config, services) {
     async dashboard(ctx) {
       ctx.body = { data: { ...services.workflow.summary(), libraries: await services.mediaLibrary.libraries(), connections: {
         qbittorrent: { url: config.qbtUrl, configured: Boolean(config.qbtKey) }, jellyfin: { url: config.jellyfinUrl, configured: Boolean(config.jellyfinKey) }, deepseek: { url: config.deepseekUrl, configured: Boolean(config.deepseekKey), model: config.deepseekModel }
-      }, pathMapping: config.pathMapping, callbackUrl: `${config.publicUrl.replace(/\/$/, '')}/api/webhooks/qbittorrent/completed` } };
+      }, pathMapping: config.pathMapping, callbackUrl: `${config.publicUrl.replace(/\/$/, '')}/api/webhooks/qbittorrent/completed`, webhookAuthRequired: config.webhookAuthRequired !== false } };
     },
     async check(ctx) {
       const calls = { qbittorrent: () => services.qbittorrent.version(), jellyfin: async () => ({ version: (await services.jellyfin.info()).Version }), deepseek: async () => ({ models: (await services.deepseek.models()).data.map(m => m.id) }) };

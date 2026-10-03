@@ -2,6 +2,14 @@ import { text, validFeedUrl } from '../util/validation.js';
 import { AppError } from '../util/error.js';
 export function qbittorrentController(qbt) {
   return {
+    async completionNotification(ctx) { ctx.body = { data: await qbt.completionNotification() }; },
+    async setCompletionNotification(ctx) {
+      const body = ctx.request.body ?? {};
+      if (Object.keys(body).some(key => !['enabled', 'program'].includes(key))) throw new AppError('只允许修改下载完成通知设置');
+      if (typeof body.enabled !== 'boolean' || typeof body.program !== 'string' || /[\r\n\0]/.test(body.program)) throw new AppError('启用状态需为布尔值，通知命令需为单行文本');
+      const program = text(body.program, '通知命令', { optional: !body.enabled, max: 4096 });
+      ctx.body = { data: await qbt.setCompletionNotification({ enabled: body.enabled, program }) };
+    },
     async rss(ctx) { ctx.body = { data: await qbt.rss() }; },
     async rules(ctx) { ctx.body = { data: await qbt.rules() }; },
     async categories(ctx) { ctx.body = { data: await qbt.categories() }; },

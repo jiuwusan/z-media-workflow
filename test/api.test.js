@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
+import { loadConfig } from '../src/config/index.js';
 const admin = 'admin-token-at-least-24-characters', webhook = 'webhook-token-at-least-24-characters';
 async function setup(t) {
   const config = { adminToken: admin, workflowToken: webhook, sessionMs: 60000, secureCookie: false, qbtKey: 'secret-qbt', jellyfinKey: 'secret-jelly', deepseekKey: 'secret-ds', publicUrl: '', trustProxy: false };
@@ -14,7 +15,7 @@ async function setup(t) {
   await new Promise(r => server.once('listening', r)); t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`; config.publicUrl = base;
   const req = (path, options = {}) => fetch(`${base}${path}`, options);
-  return { req, base, config };
+  return { req, base, config, services };
 }
 test('admin cookie protects writes with Origin and CSRF; logout invalidates session', async t => {
   const { req, base } = await setup(t);
@@ -62,4 +63,38 @@ test('expired management session requires login again', async t => {
   const r = await req('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ token: admin }) });
   const cookie = r.headers.get('set-cookie').split(';')[0]; await new Promise(resolve => setTimeout(resolve, 15));
   assert.equal((await req('/api/auth/session', { headers: { Cookie: cookie } })).status, 401);
+});
+
+test('completion settings require admin, validate input and reject unrelated preferences', async t => {
+  const { req, services } = await setup(t);
+  let state = { enabled: false, program: '' }, writes = 0;
+  services.qbittorrent.completionNotification = async () => state;
+  services.qbittorrent.setCompletionNotification = async input => { writes++; state = input; return state; };
+  const route = '/api/qbittorrent/completion-notification';
+  const headers = { Authorization: `Bearer ${admin}`, 'Content-Type': 'application/json' };
+  assert.equal((await req(route)).status, 401);
+  assert.equal((await req(route, { headers: { Authorization: `Bearer ${webhook}` } })).status, 401);
+  assert.equal((await req(route, { headers })).status, 200);
+  for (const body of [{ enabled: 'yes', program: 'node x' }, { enabled: true, program: '' }, { enabled: true, program: 'node x\nother' }, { enabled: false, program: '', save_path: '/other' }]) {
+    assert.equal((await req(route, { method: 'PUT', headers, body: JSON.stringify(body) })).status, 400);
+  }
+  assert.equal(writes, 0);
+  const r = await req(route, { method: 'PUT', headers, body: JSON.stringify({ enabled: true, program: 'node /opt/notify.mjs "%I"' }) });
+  assert.equal(r.status, 200); assert.equal((await r.json()).data.enabled, true); assert.equal(writes, 1);
+});
+
+test('internal webhook accepts tokenless curl forms while management APIs remain protected', async t => {
+  const { req, config } = await setup(t); config.webhookAuthRequired = false;
+  const route = '/api/webhooks/qbittorrent/completed';
+  const r = await req(route, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `hash=${'a'.repeat(40)}` });
+  assert.equal(r.status, 202);
+  assert.equal((await req('/api/workflows')).status, 401);
+  assert.equal((await req('/api/qbittorrent/completion-notification', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{"enabled":false,"program":""}' })).status, 401);
+  assert.equal((await req(route, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'hash=bad' })).status, 400);
+});
+
+test('disabled webhook auth does not require a workflow token; enabled auth still does', () => {
+  const env = { ADMIN_API_TOKEN: admin, QBT_API_KEY: 'mock-qbt', JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_API_KEY: 'mock-ds', WEBHOOK_AUTH_ENABLED: 'false' };
+  assert.equal(loadConfig(env).webhookAuthRequired, false);
+  assert.throws(() => loadConfig({ ...env, WEBHOOK_AUTH_ENABLED: 'true' }), /WORKFLOW_API_TOKEN/);
 });

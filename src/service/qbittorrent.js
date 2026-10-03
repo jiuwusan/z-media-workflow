@@ -3,6 +3,16 @@ import { AppError } from '../util/error.js';
 export class QbittorrentService {
   constructor(config, http) { this.http = http ?? createHttpClient({ baseUrl: `${config.qbtUrl}api/v2/`, headers: { Authorization: `Bearer ${config.qbtKey}` }, timeoutMs: config.requestTimeoutMs }); }
   version() { return this.http('app/version'); }
+  async completionNotification() {
+    const prefs = await this.http('app/preferences');
+    return { enabled: prefs.autorun_enabled === true, program: prefs.autorun_program ?? '' };
+  }
+  async setCompletionNotification({ enabled, program }) {
+    await this.http('app/setPreferences', { method: 'POST', form: { json: JSON.stringify({ autorun_enabled: enabled, autorun_program: program }) } });
+    const saved = await this.completionNotification();
+    if (saved.enabled !== enabled || saved.program !== program) throw new AppError('qBittorrent 通知设置回读不一致，请重新读取配置', 502);
+    return saved;
+  }
   async torrent(hash) {
     const list = await this.http('torrents/info', { query: { hashes: hash } });
     if (!list?.length) throw new AppError('找不到该 torrent', 404);

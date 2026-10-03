@@ -28,7 +28,7 @@ export class AuthService {
   }
   authenticate(ctx, webhook = false) {
     const auth = ctx.get('Authorization'), bearer = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
-    if (webhook) { if (!tokenEquals(bearer, this.config.workflowToken)) throw new AppError('下载通知认证失败', 401); return; }
+    if (webhook) { if (this.config.webhookAuthRequired === false) return; if (!tokenEquals(bearer, this.config.workflowToken)) throw new AppError('下载通知认证失败', 401); return; }
     if (tokenEquals(bearer, this.config.adminToken)) return;
     const session = this.session(ctx.cookies.get('media_session', { signed: false }));
     if (!session) throw new AppError('请登录管理面板', 401);

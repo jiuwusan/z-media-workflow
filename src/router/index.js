@@ -14,6 +14,8 @@ export function createRouter(config, services) {
   router.post('/api/auth/logout', admin, auth.logout);
   router.get('/api/dashboard', admin, system.dashboard);
   router.post('/api/connections/check', admin, system.check);
+  router.get('/api/qbittorrent/completion-notification', admin, qbt.completionNotification);
+  router.put('/api/qbittorrent/completion-notification', admin, qbt.setCompletionNotification);
   router.get('/api/qbittorrent/rss', admin, qbt.rss);
   router.get('/api/qbittorrent/categories', admin, qbt.categories);
   router.get('/api/qbittorrent/rss/rules', admin, qbt.rules);

@@ -18,7 +18,9 @@ export function createApp({ config, services = createServices(config) }) {
     try { await next(); }
     catch (e) { ctx.status = e.status ?? 500; const message = e.status ? redact(e.message, secrets) : '服务内部错误'; ctx.body = { error: { code: e.code ?? 'ERROR', message } }; if (ctx.status >= 500) log('request.failed', { path: ctx.path, error: redact(e.message, secrets) }); }
   });
-  app.use(bodyParser({ enableTypes: ['json'], jsonLimit: '128kb' }));
+  const parseJson = bodyParser({ enableTypes: ['json'], jsonLimit: '128kb' });
+  const parseCallbackForm = bodyParser({ enableTypes: ['form'], formLimit: '8kb' });
+  app.use((ctx, next) => ctx.method === 'POST' && ctx.path === '/api/webhooks/qbittorrent/completed' && ctx.is('application/x-www-form-urlencoded') ? parseCallbackForm(ctx, next) : parseJson(ctx, next));
   const router = createRouter(config, services); app.use(router.routes()); app.use(router.allowedMethods());
   const root = fileURLToPath(new URL('../web/dist/', import.meta.url));
   const staticFiles = serve(root, { hidden: false, index: 'index.html' });
