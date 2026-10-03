@@ -19,6 +19,8 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
     if (route === '/qbt/api/v2/app/setPreferences') { const update = JSON.parse(new URLSearchParams(raw).get('json')); assert.deepEqual(Object.keys(update).sort(), ['autorun_enabled', 'autorun_program']); notification = update; changes.push('notification'); res.end(''); return; }
     if (route === '/qbt/api/v2/rss/items') return json({ 剧集: { 测试订阅: { url: 'https://example.com/rss', articles: [{ title: 'Dune 2021', date: '2026-10-02T12:00:00Z', link: 'https://example.com/article' }] } } });
     if (route === '/qbt/api/v2/rss/rules') return json(rules);
+    if (route === '/qbt/api/v2/torrents/categories') return json({ movies: { name: 'movies', savePath: '/media/movies' }, series: { name: 'series', savePath: '/media/series' } });
+    if (route === '/qbt/api/v2/rss/removeRule') { delete rules[new URLSearchParams(raw).get('ruleName')]; changes.push('remove-rule'); res.end(''); return; }
     if (route === '/qbt/api/v2/rss/setRule') { const form = new URLSearchParams(raw); rules[form.get('ruleName')] = JSON.parse(form.get('ruleDef')); changes.push('rule'); res.end(''); return; }
     if (route === '/jelly/Library/VirtualFolders') return json([{ Name: 'movie', ItemId: libId, CollectionType: 'movies', Locations: ['/media/movies'] }]);
     if (route === '/jelly/System/Info') return json({ Version: '10.11.11' });
@@ -47,9 +49,28 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await mkdir('.test-artifacts', { recursive: true }); await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: '.test-artifacts/dashboard-desktop.png', fullPage: true });
   await page.getByRole('link', { name: 'RSS 订阅', exact: true }).click(); await page.getByText('Dune 2021', { exact: true }).waitFor();
   await page.getByRole('button', { name: '新建规则' }).click();
-  const dialog = page.getByRole('dialog'); await dialog.getByLabel('规则名称').fill('电影规则'); await dialog.getByLabel('包含条件').fill('Dune.*1080p'); await dialog.getByLabel('保存目录（qBittorrent 服务器路径）').fill('/media/movies');
+  const dialog = page.getByRole('dialog'); await dialog.getByLabel('规则名称').fill('电影规则'); await dialog.getByLabel('包含条件').fill('Dune.*1080p');
+  assert.equal(await dialog.getByLabel('保存目录（qBittorrent 服务器路径）').count(), 0);
+  assert.equal(await dialog.getByLabel('剧集筛选').count(), 0);
+  await dialog.getByRole('checkbox', { name: '使用正则表达式', exact: true }).locator('..').click();
+  await dialog.getByLabel('排除条件').fill('(Pure|HDR)');
+  await dialog.getByLabel('指定分类').click(); await page.getByRole('option', { name: 'movies', exact: true }).click();
+  await dialog.getByRole('checkbox', { name: '剧集\\测试订阅', exact: true }).locator('..').click();
   await dialog.getByRole('button', { name: '保存规则' }).click(); await page.getByText('电影规则', { exact: true }).waitFor();
-  assert.equal(rules['电影规则'].savePath, '/media/movies');
+  assert.deepEqual(rules['电影规则'], { enabled: true, useRegex: true, mustContain: 'Dune.*1080p', mustNotContain: '(Pure|HDR)', assignedCategory: 'movies', affectedFeeds: ['https://example.com/rss'] });
+  Object.assign(rules['电影规则'], { ignoreDays: 7, smartFilter: true, lastMatch: 'old-match', torrentParams: { category: 'series', save_path: '/custom', content_layout: 'Subfolder', stopped: true } });
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/qbittorrent/rss/rules')), page.getByRole('button', { name: '重新读取', exact: true }).click()]);
+  await page.getByRole('button', { name: '编辑', exact: true }).click();
+  await dialog.waitFor(); await dialog.locator('.el-select__selected-item').getByText('series', { exact: true }).waitFor();
+  await dialog.getByLabel('包含条件').fill('Dune.*2160p');
+  await dialog.getByRole('button', { name: '保存规则' }).click(); await dialog.waitFor({ state: 'hidden' });
+  assert.equal(rules['电影规则'].mustContain, 'Dune.*2160p');
+  assert.equal(rules['电影规则'].ignoreDays, 7); assert.equal(rules['电影规则'].smartFilter, true); assert.equal(rules['电影规则'].lastMatch, 'old-match');
+  assert.deepEqual(rules['电影规则'].torrentParams, { category: 'series', save_path: '/custom', content_layout: 'Subfolder', stopped: true });
+  await page.getByRole('button', { name: '停用', exact: true }).click();
+  await page.getByRole('button', { name: '启用', exact: true }).waitFor(); assert.equal(rules['电影规则'].enabled, false);
+  await page.getByRole('button', { name: '删除', exact: true }).click(); await page.getByRole('button', { name: '删除', exact: true }).last().click();
+  await page.getByText('下载规则已删除', { exact: true }).waitFor(); assert.deepEqual(rules, {});
   await page.getByRole('link', { name: '媒体识别', exact: true }).click(); await page.getByText('Dune.2021.1080p', { exact: true }).waitFor();
   await page.getByRole('button', { name: '预览候选', exact: true }).click(); await page.getByRole('button', { name: '确认此候选' }).waitFor();
   assert.equal(applied, null); await page.getByRole('textbox', { name: '搜索媒体名称' }).fill('Dune');
@@ -77,5 +98,5 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.waitForFunction(() => document.querySelectorAll('.el-message').length === 0);
   await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: '.test-artifacts/dashboard-mobile.png', fullPage: true });
   await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('button', { name: '退出登录' }).click(); await page.getByRole('heading', { name: '登录工作空间' }).waitFor();
-  assert.deepEqual(errors, []); assert.deepEqual(changes, ['rule', 'apply', 'notification']);
+  assert.deepEqual(errors, []); assert.deepEqual(changes, ['rule', 'rule', 'rule', 'remove-rule', 'apply', 'notification']);
 });

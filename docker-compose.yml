@@ -1,9 +1,6 @@
 services:
   z-media-workflow:
     image: ${DOCKER_IMAGE:-jiuwusan/z-media-workflow:latest}
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: z-media-workflow
     env_file:
       - .env

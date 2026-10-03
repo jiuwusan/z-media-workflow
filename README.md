@@ -33,7 +33,7 @@ ADMIN_PASSWORD=填写管理员密码
 
 参考 `senior-buyer`，使用 `jiuwusan/z-media-workflow:latest` 镜像、外部 `wk` 网络和 `restart: always`。镜像基于 Node.js 22，分阶段构建 Vue 面板及后端生产依赖，由非 root 用户运行 Koa，内置 `/health` 健康检查。管理面板和 API 共用一个容器，宿主机默认端口为 **3000**。
 
-在部署机器安装 Docker Engine / Docker Desktop 和 Compose v2，复制项目代码。首次部署将 `.env.example` 复制为 `.env` 并填写各服务密钥、管理员用户名/密码及可选回调令牌；已有 `.env` 时保留配置。在 `.env` 中追加或调整：
+部署机器只需 Docker Engine / Docker Desktop、Compose v2、`docker-compose.yml` 和 `.env`，无需本地构建镜像。首次部署将 `.env.example` 复制为 `.env` 并填写各服务密钥、管理员用户名/密码及可选回调令牌；已有 `.env` 时保留配置。在 `.env` 中追加或调整：
 
 ```dotenv
 DOCKER_IMAGE=jiuwusan/z-media-workflow:latest
@@ -51,21 +51,34 @@ DOCKER_STOP_GRACE_PERIOD=35s
 docker network ls --filter name=wk
 docker network create wk
 docker compose config --quiet
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 docker compose ps
 docker compose logs -f --tail=100
 ```
 
 打开 `http://你的服务器地址:3000/`，使用 `.env` 的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 登录。qBittorrent 完成通知脚本的 `WORKFLOW_CALLBACK_URL` 填 `http://你的服务器地址:3000/api/webhooks/qbittorrent/completed`；如果 qBittorrent 容器也在 `wk` 网络，可用 `http://z-media-workflow:3000/api/webhooks/qbittorrent/completed`。通知脚本仍应在 qBittorrent 所在机器/容器运行。
 
-更新代码后执行 `docker compose up -d --build`。查看三方连接可执行 `docker compose exec z-media-workflow npm run check:connections`。使用已发布镜像时执行 `docker compose pull` 和 `docker compose up -d --no-build`；本项目只配置镜像名，不会自动发布镜像。
+GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker compose up -d` 更新服务。查看三方连接可执行 `docker compose exec z-media-workflow npm run check:connections`。
 
 `.env` 通过 Compose 在运行时注入，已从构建上下文排除。服务通过远程 API 操作媒体，无需挂载媒体目录或数据库。日志输出到 Docker，单个日志文件最多 10 MB，保留 3 个。任务记录和登录会话保存在内存，重建/重启容器后重新登录、重新扫描；默认关闭等待为 30 秒，调整 `SHUTDOWN_TIMEOUT_MS` 时应将 `DOCKER_STOP_GRACE_PERIOD` 设置得更长。
+
+## GitHub Actions 发布镜像
+
+工作流位于 `.github/workflows/docker-publish.yml`，沿用 `senior-buyer` 的 Docker Hub 账号和发布方式，使用 [Docker 官方 GitHub Actions](https://docs.docker.com/guides/gha/)。
+
+1. 在 Docker Hub 创建 `jiuwusan/z-media-workflow` 仓库，并生成有该仓库写入权限的访问令牌。
+2. 在 GitHub 仓库 **Settings → Secrets and variables → Actions** 配置 Secret `OCKERHUB_USERNAME`（当前约定名称，值为 Docker Hub 用户名）和 `DOCKERHUB_TOKEN`（Docker Hub 访问令牌）。用户名也兼容 `DOCKERHUB_USERNAME`；两者同时存在时优先使用 `OCKERHUB_USERNAME`。账号需有 `jiuwusan/z-media-workflow` 的推送权限。媒体服务的 API 密钥和管理员密码无需配置到 Actions。
+3. 推送代码至 `master`，或在 **Actions → Build and Push Docker Image → Run workflow** 手动触发。
+
+流程先运行 `npm test`，通过后从 Dockerfile 构建 `linux/amd64` 和 `linux/arm64` 镜像并推送到 Docker Hub。`master` 发布 `latest`、`master` 和 `sha-<提交短哈希>` 标签；手动构建其他分支发布分支和提交标签，不覆盖 `latest`。PR 运行测试和镜像构建，不登录 Docker Hub、不推送镜像。
+
+部署默认拉取 `jiuwusan/z-media-workflow:latest`；需要固定版本时，将 `.env` 的 `DOCKER_IMAGE` 改为对应提交标签后执行 `docker compose pull` 和 `docker compose up -d`。
 
 ## 面板
 
 - 概览：任务统计、服务连接检查、目标库和近期任务。
-- RSS：添加/删除/刷新订阅、读取文章，管理原生下载规则及保存目录。
+- RSS：添加/删除/刷新订阅、读取文章，增删查改原生下载规则，支持启停、正则匹配、包含/排除条件、分类下拉选择及适用订阅源勾选。其余选项新建时使用 qBittorrent 默认值，编辑时保留原值与匹配历史。
 - 工作流任务：扫描状态、每项识别结果、失败重试。
 - 媒体识别：分页查看未识别条目，预览或自动识别选中条目/目标库。
 - 任务详情：查看名称提取和 Jellyfin 候选，人工确认，或修改名称/年份后重新搜索。
@@ -82,7 +95,7 @@ docker compose logs -f --tail=100
 | series | 电视剧 | `/MediasVol3/series` |
 | movie | 电影 | `/MediasVol3/movies` |
 
-qBittorrent 默认目录是 `/MediasVol3/downloads`，它不属于上述媒体库。**请在 RSS 规则中将 savePath 设置为电影或电视剧媒体库对应的 qBittorrent 路径**，或先自行整理文件到库目录。服务不移动、重命名、删除媒体文件。电视剧每个剧集使用独立文件夹，Season 子文件夹和单集会按所属 Series 根目录识别；电影按每个视频文件名识别。
+qBittorrent 默认目录是 `/MediasVol3/downloads`，它不属于上述媒体库。**请在 qBittorrent 中配置下载分类的保存目录，再在 RSS 规则中选择该分类，确保实际下载路径位于电影或电视剧媒体库内**，或先自行整理文件到库目录。服务不移动、重命名、删除媒体文件。电视剧每个剧集使用独立文件夹，Season 子文件夹和单集会按所属 Series 根目录识别；电影按每个视频文件名识别。
 
 两端挂载路径一致时，`QBT_PATH_PREFIX` 和 `JELLYFIN_PATH_PREFIX` 留空。如果 qBittorrent 是 `/downloads/series`，而 Jellyfin 是 `/MediasVol3/series`，设置：
 
