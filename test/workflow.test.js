@@ -81,7 +81,7 @@ test('library discovery follows additions and deletions and ignores legacy fixed
 test('retry re-verifies failed applied candidate even when provider IDs already exist', async () => {
   let applied = false, attempts = 0;
   const { workflow, deps } = fixture();
-  deps.mediaLibrary.forTorrent = async () => ({ items: [{ ...movie, ProviderIds: applied ? candidate.ProviderIds : {} }], missingPaths: [] });
+  deps.mediaLibrary.unidentified = async () => ({ items: applied ? [] : [movie], total: applied ? 0 : 1 });
   deps.jellyfin.apply = async () => { applied = true; };
   deps.jellyfin.verify = async () => { attempts++; if (attempts === 1) throw new Error('wrong title despite provider IDs'); return { ...movie, ...candidate }; };
   const original = workflow.enqueue({ hash: 'c'.repeat(40) }); assert.equal((await done(workflow, original)).status, 'failed');
@@ -89,17 +89,72 @@ test('retry re-verifies failed applied candidate even when provider IDs already 
   assert.equal(attempts, 2); assert.equal(retried.items[0].confirmed.Name, 'Dune'); assert.equal(retried.status, 'completed');
 });
 
-test('partially ingested multi-movie torrent retains missing file and fails instead of deduplicating success', async () => {
+test('download callback waits for refresh then identifies library media without torrent path filtering', async () => {
   const { workflow, deps } = fixture();
-  deps.mediaLibrary.forTorrent = async () => ({ items: [movie], missingPaths: ['/media/movies/Other.mkv'] });
-  const result = await done(workflow, workflow.enqueue({ hash: 'd'.repeat(40) }));
-  assert.equal(result.status, 'failed'); assert.equal(result.items.find(i => i.path.endsWith('Other.mkv')).status, 'failed');
+  let release, listed = false;
+  const refreshed = new Promise(resolve => { release = resolve; });
+  deps.jellyfin.refreshAndWait = () => refreshed;
+  deps.qbittorrent.torrent = async () => ({ progress: 1, save_path: '/unrelated/downloads' });
+  deps.qbittorrent.files = async () => { throw new Error('torrent files must not be requested'); };
+  deps.mediaLibrary.forTorrent = async () => { throw new Error('torrent paths must not filter library media'); };
+  deps.mediaLibrary.unidentified = async () => { listed = true; return { items: [movie], total: 1 }; };
+  const job = workflow.enqueue({ hash: 'd'.repeat(40) });
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(listed, false); assert.equal(workflow.get(job.id).stage, '扫描媒体库');
+  release();
+  const result = await done(workflow, job);
+  assert.equal(listed, true); assert.equal(result.status, 'completed'); assert.equal(result.items[0].itemId, movie.Id);
+});
+
+test('download callback reads every page of unidentified movies and series', async () => {
+  const { workflow, deps } = fixture();
+  const series = { Id: 'series', Type: 'Series', Path: '/media/series/Dune', Name: 'Dune', ProviderIds: {} };
+  const movies = Array.from({ length: 200 }, (_, index) => ({ ...movie, Id: `movie-${index}` }));
+  const pages = [], applied = [];
+  deps.qbittorrent.files = async () => { throw new Error('torrent files must not be requested'); };
+  deps.mediaLibrary.unidentified = async ({ page, pageSize }) => {
+    pages.push(page); assert.equal(pageSize, 200);
+    return { items: page === 1 ? movies : [series], total: 201 };
+  };
+  deps.mediaLibrary.ensureItem = async id => id === series.Id ? series : movies.find(item => item.Id === id);
+  deps.jellyfin.apply = async id => { applied.push(id); };
+  deps.jellyfin.verify = async id => ({ ...(id === series.Id ? series : movie), ...candidate });
+  let refreshedSeries;
+  deps.jellyfin.refreshItem = async id => { refreshedSeries = id; };
+  const result = await done(workflow, workflow.enqueue({ hash: 'f'.repeat(40) }));
+  assert.equal(result.status, 'completed'); assert.deepEqual(pages, [1, 2]);
+  assert.equal(result.items.length, 201); assert.equal(applied.length, 201); assert.equal(refreshedSeries, series.Id);
+});
+
+test('download callback completes with a message when no unidentified media remain', async () => {
+  const { workflow, deps, events } = fixture();
+  deps.mediaLibrary.unidentified = async () => ({ items: [], total: 0 });
+  const result = await done(workflow, workflow.enqueue({ hash: '1'.repeat(40) }));
+  assert.equal(result.status, 'completed'); assert.equal(result.items.length, 0);
+  assert.equal(result.message, '目标范围内没有未识别媒体'); assert.deepEqual(events, ['scan']);
+});
+
+test('incomplete download does not refresh or identify library media', async () => {
+  const { workflow, deps, events } = fixture();
+  deps.qbittorrent.torrent = async () => ({ progress: 0.5, amount_left: 100 });
+  const result = await done(workflow, workflow.enqueue({ hash: '2'.repeat(40) }));
+  assert.equal(result.status, 'failed'); assert.match(result.error, /尚未下载完成/); assert.deepEqual(events, []);
+});
+
+test('manual scan preserves selected library, media type and item IDs', async () => {
+  const { workflow, deps } = fixture();
+  const input = { libraryId: 'l', type: 'Movie', itemIds: ['m'], dryRun: true };
+  deps.mediaLibrary.unidentified = async query => {
+    assert.deepEqual(query, { ...input, page: 1, pageSize: 200 });
+    return { items: [movie], total: 1 };
+  };
+  assert.equal((await done(workflow, workflow.enqueue(input))).status, 'needs_review');
 });
 
 test('recovery survives a second retry failing before items are discovered', async () => {
   let applied = false, verifies = 0, scans = 0;
   const { workflow, deps } = fixture();
-  deps.mediaLibrary.forTorrent = async () => ({ items: [{ ...movie, ProviderIds: applied ? candidate.ProviderIds : {} }], missingPaths: [] });
+  deps.mediaLibrary.unidentified = async () => ({ items: applied ? [] : [movie], total: applied ? 0 : 1 });
   deps.jellyfin.refreshAndWait = async () => { if (++scans === 2) throw new Error('scan failed'); };
   deps.jellyfin.apply = async () => { applied = true; };
   deps.jellyfin.verify = async () => { if (++verifies === 1) throw new Error('bad title'); return { ...movie, ...candidate }; };

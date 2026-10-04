@@ -56,31 +56,17 @@ export class WorkflowService {
   async run(job) {
     const { jellyfin, qbittorrent, mediaLibrary } = this.services;
     const recovery = this.recoveries.get(job.id) ?? [];
-    let torrent, files;
     if (job.input.hash) {
-      this.update(job, '检查下载'); torrent = await qbittorrent.torrent(job.input.hash); files = await qbittorrent.files(job.input.hash);
+      this.update(job, '检查下载'); const torrent = await qbittorrent.torrent(job.input.hash);
       if (torrent.progress < 1 || (torrent.amount_left ?? 0) > 0) throw new AppError('torrent 尚未下载完成', 409);
     }
     this.update(job, '扫描媒体库'); await jellyfin.refreshAndWait();
-    let items;
-    if (torrent) {
-      let missingPaths = [];
-      for (let attempt = 0; attempt <= this.config.ingestRetries; attempt++) {
-        const result = await mediaLibrary.forTorrent(torrent, files, job.input.type);
-        items = result.items; missingPaths = result.missingPaths;
-        if (items.length && !missingPaths.length) break;
-        if (attempt < this.config.ingestRetries) { this.update(job, '等待文件入库'); await sleep(this.config.pollMs); await jellyfin.refreshAndWait(); }
-      }
-      for (const path of missingPaths) job.items.push({ itemId: null, path, source: mediaSource({ Type: 'Movie', Path: path }), status: 'failed', candidates: [], error: '下载文件尚未进入目标媒体库，请检查目录与挂载', code: 'INGEST_PENDING' });
-      if (!items.length) throw new AppError('下载文件尚未进入目标媒体库，请检查 RSS 保存目录、挂载及路径映射', 422, 'INGEST_PENDING');
-      items = items.filter(i => !hasIdentity(i));
-    } else {
-      // Explicit pagination preserves complete scan scope instead of silently stopping at the first page.
-      items = [];
-      for (let page = 1; ; page++) {
-        const result = await mediaLibrary.unidentified({ ...job.input, page, pageSize: 200 }); items.push(...result.items);
-        if (items.length >= result.total || !result.items.length) break;
-      }
+    // Download callbacks scan unidentified library media, independently of torrent paths.
+    // Explicit pagination also preserves the complete scope of manual scans.
+    const items = [];
+    for (let page = 1; ; page++) {
+      const result = await mediaLibrary.unidentified({ ...job.input, page, pageSize: 200 }); items.push(...result.items);
+      if (items.length >= result.total || !result.items.length) break;
     }
     // Failed apply/verify entries are never skipped solely because ProviderIds now exist.
     for (const previous of recovery.filter(i => i.itemId)) {

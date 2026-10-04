@@ -97,16 +97,11 @@ GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker com
 
 qBittorrent 默认目录是 `/MediasVol3/downloads`，它不属于上述媒体库。**请在 qBittorrent 中配置下载分类的保存目录，再在 RSS 规则中选择该分类，确保实际下载路径位于电影或电视剧媒体库内**，或先自行整理文件到库目录。服务不移动、重命名、删除媒体文件。电视剧每个剧集使用独立文件夹，Season 子文件夹和单集会按所属 Series 根目录识别；电影按每个视频文件名识别。
 
-两端挂载路径一致时，`QBT_PATH_PREFIX` 和 `JELLYFIN_PATH_PREFIX` 留空。如果 qBittorrent 是 `/downloads/series`，而 Jellyfin 是 `/MediasVol3/series`，设置：
-
-```dotenv
-QBT_PATH_PREFIX=/downloads
-JELLYFIN_PATH_PREFIX=/MediasVol3
-```
+下载完成通知后的识别直接使用 Jellyfin 媒体列表，不依赖 qBittorrent 与 Jellyfin 之间的路径映射。`QBT_PATH_PREFIX` 和 `JELLYFIN_PATH_PREFIX` 不再影响该流程。
 
 服务在每次查询和识别时动态读取 Jellyfin 当前全部电影、剧集库：新增库自动纳入，删除库自动排除，始终排除音乐、混合库等其他类型。无需填写媒体库 ID；旧的 `JELLYFIN_SERIES_LIBRARY_ID`、`JELLYFIN_MOVIE_LIBRARY_ID` 即使仍在环境变量中也不再限制范围。面板“刷新列表”会同步更新库选项；已选择的库被删除时回到全部目标库。
 
-动态发现库不会单独触发识别任务。存量未识别媒体可在“媒体识别”中启动识别；新下载由 qBittorrent 下载完成回调触发，按下载路径定位当前库内对应媒体。
+动态发现库不会单独触发识别任务。存量未识别媒体可在“媒体识别”中启动识别；qBittorrent 下载完成回调会先检查下载完成状态，然后刷新 Jellyfin 并等待刷新结束，再分页获取当前全部电影、剧集库中的未识别媒体进行识别，不按种子文件路径筛选。回调显式提供 `type` 时仅处理该类型；手动识别仍按面板选择的库、类型及媒体范围执行。没有未识别媒体时正常完成并提示；候选不唯一时等待人工确认，应用候选后回读确认媒体信息。
 
 ## qBittorrent 下载完成通知
 
