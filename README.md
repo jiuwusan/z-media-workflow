@@ -61,7 +61,7 @@ docker compose logs -f --tail=100
 
 GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker compose up -d` 更新服务。查看三方连接可执行 `docker compose exec z-media-workflow npm run check:connections`。
 
-`.env` 通过 Compose 在运行时注入，已从构建上下文排除。服务通过远程 API 操作媒体，无需挂载媒体目录或数据库。日志输出到 Docker，单个日志文件最多 10 MB，保留 3 个。任务记录和登录会话保存在内存，重建/重启容器后重新登录、重新扫描；默认关闭等待为 30 秒，调整 `SHUTDOWN_TIMEOUT_MS` 时应将 `DOCKER_STOP_GRACE_PERIOD` 设置得更长。
+`.env` 通过 Compose 在运行时注入，已从构建上下文排除。服务通过远程 API 操作媒体，无需挂载媒体目录。识别游标使用 JSON 文件，Compose 将 `workflow-data` 命名卷挂载到 `/app/data`，更新镜像或重建容器后保留游标；`docker compose down -v` 会删除该卷。日志输出到 Docker，单个日志文件最多 10 MB，保留 3 个。任务记录和登录会话保存在内存，重启后重新登录；默认关闭等待为 30 秒，调整 `SHUTDOWN_TIMEOUT_MS` 时应将 `DOCKER_STOP_GRACE_PERIOD` 设置得更长。
 
 ## GitHub Actions 发布镜像
 
@@ -87,6 +87,16 @@ GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker com
 “预览候选”会刷新库并调用 DeepSeek，但不应用元数据；“识别并应用”仅对名称及可选年份匹配后唯一的候选自动写入。无候选、多候选、年份冲突进入待确认。任务信息只在当前服务进程内保留，重启后需要重新扫描。
 
 AI 提取名称时，英文作品有可靠的官方或通用中文译名则优先返回中文；无法确定中文译名时保留原名，不自行翻译或编造。
+
+## 已识别媒体游标
+
+本地默认文件为 `data/media-cursors.json`，可通过 `MEDIA_CURSOR_FILE` 修改；Compose 固定使用 `/app/data/media-cursors.json`。启动时读取一次到内存，更新后同步写入临时文件并替换原文件。文件损坏会阻止启动，避免静默重置游标。
+
+每个 Jellyfin 服务、媒体库和类型分别保存游标。剧集按“节目添加日期”、电影按“加入日期”倒序查询，均使用 `DateCreated`，不会用最近加入单集的日期替代节目的添加日期。首次无游标时处理现有全部电影和剧集，包括 Jellyfin 已有 Tmdb / Tvdb / Imdb ID 的条目；列表中的“未识别”指尚未被工作流确认。只有候选应用、回读确认及必要的剧集刷新成功后，才推进游标。
+
+后续处理添加日期晚于游标的媒体、游标日期相同但尚未确认的媒体，以及保留的失败／待确认条目。整批待处理 ID 会先保存，避免较新媒体成功后漏掉较早的失败项；预览候选不推进游标。新增媒体库自动从首次全量开始，删除的媒体库不会再查询。当前仍分页读取库列表，但仅对上述条目调用 AI 识别。
+
+日期游标依赖 Jellyfin 的添加日期设置。如果选择“使用文件创建日期”，新导入的旧文件可能早于游标；建议选择“使用加入媒体库时的扫描日期”。需要重新处理全部存量时，停止服务、备份并移除游标文件后再启动。
 
 ## 配置媒体目录
 

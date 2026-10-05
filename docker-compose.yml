@@ -11,9 +11,12 @@ services:
       PORT: 3000
       PUBLIC_URL: ${DOCKER_PUBLIC_URL:-http://localhost:3000/}
       WORKFLOW_CALLBACK_URL: ${WORKFLOW_CALLBACK_URL:-http://172.29.0.1:3000/api/webhooks/qbittorrent/completed}
+      MEDIA_CURSOR_FILE: /app/data/media-cursors.json
       TZ: Asia/Shanghai
     ports:
       - '${DOCKER_HOST_PORT:-3000}:3000'
+    volumes:
+      - workflow-data:/app/data
     restart: always
     init: true
     stop_grace_period: ${DOCKER_STOP_GRACE_PERIOD:-35s}
@@ -28,3 +31,6 @@ services:
 networks:
   wk:
     external: true
+
+volumes:
+  workflow-data:

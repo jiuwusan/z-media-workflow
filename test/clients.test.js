@@ -43,7 +43,7 @@ test('refresh fails on failed execution and times out when never starts', async 
 test('Jellyfin paginates all results and verifies provider IDs after apply', async () => {
   const jelly = new JellyfinService({ pollMs: 1, verifyTimeoutMs: 10 }, async (path, options) => {
     if (path === 'Items' && options.query.Ids) return { Items: [{ Name: 'Dune', ProductionYear: 2021, ProviderIds: { Tmdb: 'wrong' } }], TotalRecordCount: 1 };
-    if (path === 'Items') return { Items: [{ Id: String(options.query.StartIndex) }], TotalRecordCount: 2 };
+    if (path === 'Items') { assert.ok(options.query.Fields.split(',').includes('DateCreated')); return { Items: [{ Id: String(options.query.StartIndex) }], TotalRecordCount: 2 }; }
     return { Name: 'Dune', ProductionYear: 2021, ProviderIds: { Tmdb: 'wrong' } };
   });
   assert.deepEqual(await jelly.items({ ParentId: 'lib', pageSize: 1 }), [{ Id: '0' }, { Id: '1' }]);

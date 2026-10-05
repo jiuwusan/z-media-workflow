@@ -26,6 +26,7 @@ export function loadConfig(env = process.env) {
     deepseekUrl: url('DEEPSEEK_URL', 'https://api.deepseek.com/'), deepseekKey: required('DEEPSEEK_API_KEY'), deepseekModel: env.DEEPSEEK_MODEL ?? 'deepseek-flash',
     adminUsername, adminPassword, workflowToken, webhookAuthRequired, sessionMs: number('SESSION_TTL_MS', 8 * 3600000),
     pathMapping: { from: env.QBT_PATH_PREFIX ?? '', to: env.JELLYFIN_PATH_PREFIX ?? '' },
+    mediaCursorFile: env.MEDIA_CURSOR_FILE?.trim() || 'data/media-cursors.json',
     requestTimeoutMs: number('REQUEST_TIMEOUT_MS', 15000), pollMs: number('POLL_INTERVAL_MS', 2000),
     scanTimeoutMs: number('SCAN_TIMEOUT_MS', 600000), verifyTimeoutMs: number('VERIFY_TIMEOUT_MS', 120000),
     ingestRetries: number('INGEST_RETRIES', 2, 0, 5), maxJobs: number('MAX_JOBS', 200, 10, 10000), maxQueue: number('MAX_QUEUE', 30, 1, 1000),

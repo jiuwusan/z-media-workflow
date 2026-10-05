@@ -8,7 +8,7 @@ const config = { pollMs: 1, maxJobs: 10, maxQueue: 5, jobTtlMs: 60000, ingestRet
 const fixture = (overrides = {}) => {
   const events = [];
   const jellyfin = { refreshAndWait: async () => events.push('scan'), search: async () => [candidate], apply: async () => events.push('apply'), verify: async () => ({ ...movie, ...candidate }), item: async () => movie, refreshItem: async () => {} };
-  const deps = { jellyfin, qbittorrent: { torrent: async () => ({ progress: 1 }), files: async () => [] }, deepseek: { identify: async () => ({ name: 'Dune', year: 2021 }) }, mediaLibrary: { forTorrent: async () => ({ items: [movie], missingPaths: [] }), unidentified: async () => ({ items: [movie], total: 1 }), ensureItem: async () => movie }, ...overrides };
+  const deps = { jellyfin, qbittorrent: { torrent: async () => ({ progress: 1 }), files: async () => [] }, deepseek: { identify: async () => ({ name: 'Dune', year: 2021 }) }, mediaLibrary: { track: () => {}, markIdentified: () => {}, forTorrent: async () => ({ items: [movie], missingPaths: [] }), unidentified: async () => ({ items: [movie], total: 1 }), ensureItem: async () => movie }, ...overrides };
   return { workflow: new WorkflowService(config, deps), events, deps };
 };
 async function done(workflow, job) {
@@ -32,6 +32,15 @@ test('failed verification marks task failed and hash can be retried', async () =
   const job = workflow.enqueue({ hash: 'b'.repeat(40) }); assert.equal((await done(workflow, job)).status, 'failed');
   deps.jellyfin.verify = async () => ({ ...movie, ...candidate });
   const next = workflow.retry(job.id); assert.equal((await done(workflow, next)).status, 'completed');
+});
+test('renamed media cannot apply a candidate from an old preview', async () => {
+  const { workflow, deps, events } = fixture();
+  const job = workflow.enqueue({ dryRun: true }), preview = await done(workflow, job);
+  deps.mediaLibrary.ensureItem = async () => ({ ...movie, Path: '/media/movies/Other.2026.mkv' });
+  workflow.confirm(job.id, movie.Id, preview.items[0].candidates[0].candidateId);
+  const result = await done(workflow, job);
+  assert.equal(result.status, 'failed'); assert.match(result.items[0].error, /路径已变化/);
+  assert.deepEqual(events, ['scan']);
 });
 test('ambiguous candidates are preserved without auto apply and partial errors remain visible', async () => {
   const { workflow, deps, events } = fixture();

@@ -1,8 +1,15 @@
 import path from 'node:path';
 import { AppError } from '../util/error.js';
-import { containsPath, hasIdentity, isVideo, mapPath, normalizePath } from '../util/media.js';
+import { containsPath, isVideo, mapPath, normalizePath } from '../util/media.js';
+import { MediaCursorStore } from '../util/media-cursor.js';
 export class MediaLibraryService {
-  constructor(config, jellyfin) { this.config = config; this.jellyfin = jellyfin; }
+  constructor(config, jellyfin, cursors = new MediaCursorStore(config.mediaCursorFile, config.jellyfinUrl)) { this.config = config; this.jellyfin = jellyfin; this.cursors = cursors; }
+  async track(items, filters = {}) {
+    // A first selective scan must not move the cursor past unselected older media.
+    const scope = filters.itemIds?.length ? await this.scopedItems({ libraryId: filters.libraryId, type: filters.type }) : items;
+    this.cursors.track(scope);
+  }
+  markIdentified(item) { this.cursors.confirm(item); }
   async libraries() {
     const all = await this.jellyfin.libraries();
     return all.filter(lib => ['tvshows', 'movies'].includes(lib.CollectionType));
@@ -14,7 +21,7 @@ export class MediaLibraryService {
       if (!libraries.length) throw new AppError('该媒体库已删除或不属于电影/电视剧类型');
     }
     if (type) libraries = libraries.filter(l => l.CollectionType === (type === 'Movie' ? 'movies' : 'tvshows'));
-    const items = (await Promise.all(libraries.map(async lib => (await this.jellyfin.items({ ParentId: lib.ItemId, IncludeItemTypes: lib.CollectionType === 'movies' ? 'Movie' : 'Series' })).filter(i => lib.Locations?.some(root => containsPath(root, i.Path))).map(i => ({ ...i, LibraryId: lib.ItemId }))))).flat();
+    const items = (await Promise.all(libraries.map(async lib => (await this.jellyfin.items({ ParentId: lib.ItemId, IncludeItemTypes: lib.CollectionType === 'movies' ? 'Movie' : 'Series', SortBy: 'DateCreated', SortOrder: 'Descending' })).filter(i => lib.Locations?.some(root => containsPath(root, i.Path))).map(i => ({ ...i, LibraryId: lib.ItemId }))))).flat();
     if (itemIds) {
       if (itemIds.some(id => !items.some(i => i.Id === id))) throw new AppError('选择的媒体不在目标库内', 400);
       return items.filter(i => itemIds.includes(i.Id));
@@ -22,11 +29,11 @@ export class MediaLibraryService {
     return items;
   }
   async unidentified({ page = 1, pageSize = 200, ...filters } = {}) {
-    const items = (await this.scopedItems(filters)).filter(i => !hasIdentity(i));
+    const items = (await this.scopedItems(filters)).filter(i => this.cursors.needsIdentification(i));
     return { items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize };
   }
-  async ensureItem(id) {
-    const item = (await this.scopedItems({ itemIds: [id] }))[0];
+  async ensureItem(id, filters = {}) {
+    const item = (await this.scopedItems({ ...filters, itemIds: [id] }))[0];
     if (!item) throw new AppError('媒体条目不存在', 404);
     return item;
   }

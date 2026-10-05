@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdir, access } from 'node:fs/promises';
+import { mkdir, access, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { chromium } from 'playwright';
 import { loadConfig } from '../src/config/index.js';
 import { createServices } from '../src/service/index.js';
@@ -10,7 +12,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   const libId = '1'.repeat(32), itemId = '2'.repeat(32), changes = [], errors = [];
   const libraryList = [{ Name: 'movie', ItemId: libId, CollectionType: 'movies', Locations: ['/media/movies'] }];
   let scan = 0, applied = null, rules = {}, notification = { autorun_enabled: false, autorun_program: '' };
-  const item = () => ({ Id: itemId, Type: 'Movie', Name: applied?.Name ?? 'Dune.2021.1080p', ProductionYear: applied?.ProductionYear, Path: '/media/movies/Dune.2021.1080p.mkv', ProviderIds: applied?.ProviderIds ?? {} });
+  const item = () => ({ Id: itemId, Type: 'Movie', DateCreated: '2026-10-05T00:00:00Z', Name: applied?.Name ?? 'Dune.2021.1080p', ProductionYear: applied?.ProductionYear, Path: '/media/movies/Dune.2021.1080p.mkv', ProviderIds: applied?.ProviderIds ?? { Tmdb: 'wrong-self-identification' } });
   const upstream = createServer(async (req, res) => {
     let raw = ''; for await (const d of req) raw += d;
     const url = new URL(req.url, 'http://mock'), route = url.pathname;
@@ -37,6 +39,9 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await new Promise(r => upstream.once('listening', r)); t.after(() => upstream.close());
   const base = `http://127.0.0.1:${upstream.address().port}`;
   const config = loadConfig({ ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'browser-test-password-123456', WEBHOOK_AUTH_ENABLED: 'false', QBT_URL: `${base}/qbt/`, QBT_API_KEY: 'mock-qbt', JELLYFIN_URL: `${base}/jelly/`, JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_URL: `${base}/deep/`, DEEPSEEK_API_KEY: 'mock-deep', POLL_INTERVAL_MS: '5', SCAN_TIMEOUT_MS: '1000', VERIFY_TIMEOUT_MS: '1000', JELLYFIN_MOVIE_LIBRARY_ID: libId });
+  const cursorDir = await mkdtemp(path.join(tmpdir(), 'workflow-ui-'));
+  config.mediaCursorFile = path.join(cursorDir, 'cursors.json');
+  t.after(() => rm(cursorDir, { recursive: true, force: true }));
   const services = createServices(config), server = createApp({ config, services }).listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r)); t.after(() => server.close()); config.publicUrl = `http://127.0.0.1:${server.address().port}/`;
   let executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
@@ -85,6 +90,8 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByRole('button', { name: '重新搜索' }).click(); await page.getByRole('button', { name: '确认此候选' }).waitFor();
   await page.getByRole('button', { name: '确认此候选' }).click(); await page.getByRole('button', { name: '确认并应用', exact: true }).click();
   await page.getByText('已确认：Dune', { exact: false }).waitFor(); assert.equal(applied.ProviderIds.Tmdb, '438631');
+  await page.getByRole('link', { name: '媒体识别', exact: true }).click();
+  await page.getByText('当前没有未识别媒体。新下载入库后可再次检查。', { exact: true }).waitFor();
   await page.getByRole('link', { name: '连接与通知', exact: true }).click(); await page.getByRole('heading', { name: '下载完成通知' }).waitFor();
   await page.getByRole('button', { name: '生成通知命令', exact: true }).click();
   const completionCommand = await page.getByRole('textbox', { name: '完成通知命令', exact: true }).inputValue();

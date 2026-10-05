@@ -2,6 +2,7 @@
 **/node_modules
 web/dist
 .test-artifacts
+data
 .env
 .env.*
 **/.env

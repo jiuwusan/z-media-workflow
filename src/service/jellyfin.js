@@ -42,7 +42,7 @@ export class JellyfinService {
   async items({ pageSize = 200, ...query } = {}) {
     const items = [];
     for (let start = 0; ; ) {
-      const result = await this.http('Items', { query: { Recursive: true, IncludeItemTypes: 'Movie,Series', Fields: 'Path,ProviderIds,OriginalTitle', ...query, StartIndex: start, Limit: pageSize } });
+      const result = await this.http('Items', { query: { Recursive: true, IncludeItemTypes: 'Movie,Series', Fields: 'Path,ProviderIds,OriginalTitle,DateCreated', ...query, StartIndex: start, Limit: pageSize } });
       items.push(...result.Items); start += result.Items.length;
       if (start >= result.TotalRecordCount) break;
       if (!result.Items.length) throw new AppError('Jellyfin 分页返回异常', 502);

@@ -61,7 +61,7 @@ export class WorkflowService {
       if (torrent.progress < 1 || (torrent.amount_left ?? 0) > 0) throw new AppError('torrent 尚未下载完成', 409);
     }
     this.update(job, '扫描媒体库'); await jellyfin.refreshAndWait();
-    // Download callbacks scan unidentified library media, independently of torrent paths.
+    // Download callbacks scan media beyond the workflow cursor, independently of torrent paths.
     // Explicit pagination also preserves the complete scope of manual scans.
     const items = [];
     for (let page = 1; ; page++) {
@@ -73,11 +73,13 @@ export class WorkflowService {
       if (!items.some(i => i.Id === previous.itemId)) items.push(await mediaLibrary.ensureItem(previous.itemId));
     }
     if (!items.length) { job.message = '目标范围内没有未识别媒体'; return; }
+    await mediaLibrary.track(items, job.input);
     for (const item of items) {
-      const entry = { itemId: item.Id, type: item.Type, originalName: item.Name, path: item.Path, source: mediaSource(item), status: 'running', candidates: [] };
+      const entry = { itemId: item.Id, libraryId: item.LibraryId, type: item.Type, originalName: item.Name, path: item.Path, source: mediaSource(item), status: 'running', candidates: [] };
       job.items.push(entry);
       try {
         const previous = recovery.find(i => i.itemId === item.Id);
+        if (previous && (previous.path !== item.Path || (previous.libraryId && previous.libraryId !== item.LibraryId))) throw new AppError('媒体路径或媒体库已变化，请重新扫描', 409);
         if (previous?.selectedCandidate) {
           entry.identity = previous.identity; entry.candidates = previous.candidates;
           await this.applyCandidate(job, entry, previous.selectedCandidate); continue;
@@ -99,8 +101,9 @@ export class WorkflowService {
   }
   async applyCandidate(job, entry, candidate) {
     entry.selectedCandidate = structuredClone(candidate);
-    const item = await this.services.mediaLibrary.ensureItem(entry.itemId);
+    const item = await this.services.mediaLibrary.ensureItem(entry.itemId, { libraryId: entry.libraryId ?? job.input.libraryId, type: entry.type });
     if (item.Type !== entry.type) throw new AppError('媒体类型已变化，请重新扫描', 409);
+    if (item.Path !== entry.path) throw new AppError('媒体路径已变化，请重新扫描', 409);
     this.update(job, `应用候选：${candidate.Name}`); entry.status = 'running';
     const { candidateId, ...remote } = candidate;
     // Apply is intentionally not retried blindly; failed responses may still have changed metadata.
@@ -110,6 +113,7 @@ export class WorkflowService {
     const confirmed = await this.services.jellyfin.verify(entry.itemId, remote);
     entry.confirmed = { Name: confirmed.Name, ProductionYear: confirmed.ProductionYear, ProviderIds: confirmed.ProviderIds };
     if (entry.type === 'Series') await this.services.jellyfin.refreshItem(entry.itemId);
+    this.services.mediaLibrary.markIdentified(item);
     entry.status = 'completed'; delete entry.error; delete entry.message;
   }
   retry(id) {
@@ -135,7 +139,7 @@ export class WorkflowService {
   }
   search(id, itemId, identity) {
     const { job, entry } = this.reviewEntry(id, itemId); const valid = validateIdentity(identity);
-    return this.queueAction(job, async () => { const item = await this.services.mediaLibrary.ensureItem(itemId); entry.identity = valid; await this.findCandidates(job, entry, item); entry.status = 'needs_review'; });
+    return this.queueAction(job, async () => { const item = await this.services.mediaLibrary.ensureItem(itemId, { libraryId: entry.libraryId ?? job.input.libraryId, type: entry.type }); entry.identity = valid; await this.findCandidates(job, entry, item); entry.status = 'needs_review'; });
   }
   async close(timeoutMs = 30000) { this.stopping = true; const end = Date.now() + timeoutMs; while (this.running && Date.now() < end) await sleep(25); return !this.running; }
 }
