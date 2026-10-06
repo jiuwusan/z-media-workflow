@@ -4,6 +4,16 @@ import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config/index.js';
 const admin = 'admin-token-at-least-24-characters', webhook = 'webhook-token-at-least-24-characters';
 
+test('existing torrent checks require admin login and CSRF, and cannot override category filtering', async t => {
+  const { req, login } = await setup(t), route = '/api/workflows/check-torrents';
+  assert.equal((await req(route, { method: 'POST' })).status, 401);
+  const headers = await login();
+  assert.equal((await req(route, { method: 'POST', headers: { Cookie: headers.Cookie } })).status, 403);
+  const response = await req(route, { method: 'POST', headers, body: '{}' });
+  assert.equal(response.status, 202); assert.deepEqual((await response.json()).data.input, { event: 'added', checkExisting: true });
+  assert.equal((await req(route, { method: 'POST', headers, body: '{"category":"movies"}' })).status, 400);
+});
+
 test('added callback validates hashes and uses webhook authentication', async t => {
   const { req, config } = await setup(t);
   const post = (hash, headers = {}) => req('/api/webhooks/qbittorrent/added', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ hash }) });

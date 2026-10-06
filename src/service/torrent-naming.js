@@ -2,6 +2,7 @@ import { episodeFilename, renamedEpisodePath } from '../util/torrent-naming.js';
 import { AppError } from '../util/error.js';
 import { sleep } from '../util/http.js';
 import { redact } from '../util/logger.js';
+const seriesCategory = torrent => typeof torrent.category === 'string' && /series/i.test(torrent.category);
 
 export class TorrentNamingService {
   constructor(config, qbittorrent, deepseek, secrets = []) { this.config = config; this.qbt = qbittorrent; this.ai = deepseek; this.secrets = secrets; }
@@ -16,14 +17,31 @@ export class TorrentNamingService {
     throw new AppError('等待种子元数据及文件列表超时，请重试任务', 504);
   }
   async run(job, update) {
-    const hash = job.input.hash;
+    if (!job.input.checkExisting) return this.checkTorrent(job, job.input.hash, update);
+    update(job, '读取已有种子');
+    const torrents = await this.qbt.torrents();
+    if (!Array.isArray(torrents)) throw new AppError('qBittorrent 种子列表无效', 502);
+    const targets = torrents.filter(seriesCategory);
+    for (const torrent of targets) {
+      try { await this.checkTorrent(job, torrent.hash, update); }
+      catch (error) { job.items.push({ itemId: `${torrent.hash}:torrent`, torrentHash: torrent.hash, torrentName: torrent.name, type: 'File', originalName: torrent.name ?? torrent.hash, path: '', status: 'failed', error: redact(error.message, this.secrets) }); }
+    }
+    job.message = targets.length ? `已检查 ${targets.length} 个分类包含 series 的种子` : '没有分类包含 series 的已有种子';
+  }
+  async checkTorrent(job, hash, update) {
+    update(job, '检查种子分类');
+    const torrent = await this.qbt.torrent(hash);
+    if (!seriesCategory(torrent)) {
+      if (!job.input.checkExisting) job.message = '种子分类不包含 series，已跳过文件检查';
+      return;
+    }
     update(job, '等待种子文件列表');
-    const torrent = await this.qbt.torrent(hash), files = await this.filesReady(hash);
+    const files = await this.filesReady(hash);
     const decisions = new Map();
     for (const file of files) {
       const parsed = episodeFilename(file.name);
       if (!parsed) continue;
-      const entry = { itemId: String(file.index), type: 'File', originalName: file.name, path: file.name, status: 'running' };
+      const entry = { itemId: `${hash}:${file.index}`, torrentHash: hash, torrentName: torrent.name, type: 'File', originalName: file.name, path: file.name, status: 'running' };
       job.items.push(entry);
       try {
         if (!Number.isInteger(file.index)) throw new AppError('qBittorrent 文件索引无效', 502);
@@ -34,6 +52,7 @@ export class TorrentNamingService {
         entry.seasonDecision = { ...decision, reason: redact(decision.reason, this.secrets) };
         if (decision.confidence !== 'high' || decision.season == null) { entry.status = 'skipped'; entry.message = 'AI 无法可靠确定季号，保留原文件名'; continue; }
         entry.newPath = renamedEpisodePath(parsed, decision);
+        if (!seriesCategory(await this.qbt.torrent(hash))) { entry.status = 'skipped'; entry.message = '种子分类已不包含 series，已停止重命名'; continue; }
         const current = await this.qbt.files(hash), actual = current.find(f => f.index === file.index);
         if (actual?.name === entry.newPath) { entry.status = 'completed'; continue; }
         if (actual?.name !== file.name) throw new AppError('文件名在检查期间发生变化，请重试', 409);

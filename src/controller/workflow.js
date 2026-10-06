@@ -3,6 +3,10 @@ import { pagination, scanInput, mediaType, text } from '../util/validation.js';
 export function workflowController(workflow, mediaLibrary) {
   const accepted = (ctx, job) => { ctx.status = 202; ctx.body = { data: job }; };
   return {
+    checkTorrents(ctx) {
+      if (Object.keys(ctx.request.body ?? {}).length) throw new AppError('已有种子检查无需参数，仅检查分类包含 series 的种子');
+      accepted(ctx, workflow.enqueue({ event: 'added', checkExisting: true }));
+    },
     added(ctx) {
       const body = ctx.request.body ?? {};
       if (typeof body.hash !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(body.hash)) throw new AppError('torrent hash 无效');

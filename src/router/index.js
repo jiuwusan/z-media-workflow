@@ -31,6 +31,7 @@ export function createRouter(config, services) {
   router.get('/api/media/unidentified', admin, workflow.unidentified);
   router.get('/api/workflows', admin, workflow.list);
   router.post('/api/workflows/scan', admin, workflow.scan);
+  router.post('/api/workflows/check-torrents', admin, workflow.checkTorrents);
   router.get('/api/workflows/:jobId', admin, workflow.get);
   router.post('/api/workflows/:jobId/retry', admin, workflow.retry);
   router.post('/api/workflows/:jobId/confirm', admin, workflow.confirm);

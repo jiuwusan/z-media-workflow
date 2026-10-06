@@ -30,6 +30,7 @@ export class QbittorrentService {
     return list[0];
   }
   files(hash) { return this.http('torrents/files', { query: { hash } }); }
+  torrents() { return this.http('torrents/info', { query: { filter: 'all' } }); }
   categories() { return this.http('torrents/categories'); }
   rss() { return this.http('rss/items', { query: { withData: true } }); }
   rules() { return this.http('rss/rules'); }

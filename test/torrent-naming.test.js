@@ -30,7 +30,7 @@ test('season AI returns a validated decision and can decline uncertain seasons',
 });
 function fixture(overrides = {}) {
   let files = [{ index: 0, name: source }, { index: 1, name: 'Show.S01E02.mkv' }], calls = 0;
-  const qbt = { torrent: async () => ({ name: 'Journey to the West II' }), files: async () => structuredClone(files), renameFile: async (hash, oldPath, newPath) => { calls++; files.find(f => f.name === oldPath).name = newPath; } };
+  const qbt = { torrent: async () => ({ name: 'Journey to the West II', category: 'series' }), files: async () => structuredClone(files), renameFile: async (hash, oldPath, newPath) => { calls++; files.find(f => f.name === oldPath).name = newPath; } };
   const ai = { identifySeason: async () => decision };
   const service = new TorrentNamingService({ pollMs: 1, torrentFilesTimeoutMs: 50, requestTimeoutMs: 30 }, qbt, ai, []);
   Object.assign(qbt, overrides);
@@ -72,4 +72,31 @@ test('different filename years never share a season decision', async () => {
   f.ai.identifySeason = async input => { calls++; return { ...decision, season: input.path.includes('2020') ? 1 : 2, removeTitleSuffix: null }; };
   await f.service.run(f.job, () => {});
   assert.equal(calls, 2); assert.equal(f.job.items[0].newPath, 'Show.S01E01.2020.mkv'); assert.equal(f.job.items[1].newPath, 'Show.S02E01.2021.mkv');
+});
+
+test('only categories containing series are checked, ignoring case', async () => {
+  for (const category of ['', undefined, 'movies', 'tv', 'series', 'pure-series', 'SUPER-SERIES']) {
+    const f = fixture(); f.qbt.torrent = async () => ({ name: 'Show', category });
+    let reads = 0; const files = f.qbt.files; f.qbt.files = async () => { reads++; return files(); };
+    await f.service.run(f.job, () => {});
+    assert.equal(f.calls(), /series/i.test(category ?? '') ? 1 : 0);
+    if (!/series/i.test(category ?? '')) { assert.equal(reads, 0); assert.match(f.job.message, /分类/); }
+  }
+});
+
+test('existing torrent batch filters categories and continues after a failed torrent', async () => {
+  const f = fixture(); const seen = [];
+  f.job.input = { event: 'added', checkExisting: true };
+  f.qbt.torrents = async () => [{ hash: 'bad', category: 'series' }, { hash: 'movie', category: 'movies' }, { hash: 'good', category: 'pure-series' }];
+  f.qbt.torrent = async hash => { seen.push(hash); if (hash === 'bad') throw new Error('missing torrent'); return { name: 'Journey', category: 'pure-series' }; };
+  await f.service.run(f.job, () => {});
+  assert.deepEqual(seen, ['bad', 'good', 'good']);
+  assert.equal(f.job.items[0].status, 'failed'); assert.equal(f.job.items[1].status, 'completed'); assert.equal(f.calls(), 1);
+});
+
+test('category change before rename prevents writes', async () => {
+  const f = fixture(); let checks = 0;
+  f.qbt.torrent = async () => ({ name: 'Show', category: ++checks === 1 ? 'series' : 'movies' });
+  await f.service.run(f.job, () => {});
+  assert.equal(f.calls(), 0); assert.equal(f.job.items[0].status, 'skipped');
 });

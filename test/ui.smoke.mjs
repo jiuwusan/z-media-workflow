@@ -22,7 +22,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
     if (route === '/qbt/api/v2/app/version') { res.end('v5.2.3'); return; }
     if (route === '/qbt/api/v2/app/preferences') return json({ ...notification, mail_notification_password: 'secret-mail' });
     if (route === '/qbt/api/v2/app/setPreferences') { const update = JSON.parse(new URLSearchParams(raw).get('json')); const added = Object.hasOwn(update, 'autorun_on_torrent_added_enabled'); assert.deepEqual(Object.keys(update).sort(), added ? ['autorun_on_torrent_added_enabled', 'autorun_on_torrent_added_program'] : ['autorun_enabled', 'autorun_program']); Object.assign(notification, update); changes.push(added ? 'added-notification' : 'notification'); res.end(''); return; }
-    if (route === '/qbt/api/v2/torrents/info') return json([{ name: 'Journey to the West II', progress: 0.1 }]);
+    if (route === '/qbt/api/v2/torrents/info') return json([{ hash: 'a'.repeat(40), name: 'Journey to the West II', category: 'series', progress: 0.1 }]);
     if (route === '/qbt/api/v2/torrents/files') return json([{ index: 0, name: torrentFilename }]);
     if (route === '/qbt/api/v2/torrents/renameFile') { const form = new URLSearchParams(raw); assert.equal(form.get('oldPath'), torrentFilename); torrentFilename = form.get('newPath'); changes.push('rename'); res.end(''); return; }
     if (route === '/qbt/api/v2/rss/items') return json({ 剧集: { 测试订阅: { url: 'https://example.com/rss', articles: [{ title: 'Dune 2021', date: '2026-10-02T12:00:00Z', link: 'https://example.com/article' }] } } });
@@ -133,6 +133,11 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByRole('heading', { name: '新增种子文件检查', exact: true }).waitFor();
   await page.getByText('目标名称：Journey.to.the.West.S02E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv', { exact: true }).waitFor();
   await page.getByText('已完成', { exact: true }).first().waitFor(); assert.equal(scan, previousScans);
+  await page.getByRole('link', { name: '连接与通知', exact: true }).click();
+  await page.getByRole('button', { name: '检查已有种子', exact: true }).click();
+  await page.getByRole('heading', { name: '已有种子文件检查', exact: true }).waitFor();
+  await page.getByText('已检查 1 个分类包含 series 的种子', { exact: true }).waitFor();
+  assert.equal(scan, previousScans); assert.equal(changes.filter(c => c === 'rename').length, 1);
   await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '概览', exact: true }).click();
   await page.getByRole('heading', { name: '目标媒体库' }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

@@ -26,6 +26,10 @@ export class WorkflowService {
   ensureCapacity() { if (this.stopping) throw new AppError('服务正在关闭', 503); if (this.queue.length >= this.config.maxQueue) throw new AppError('任务队列已满，请稍后重试', 429); }
   enqueue(input = {}, recovery = []) {
     this.prune();
+    if (input.checkExisting) {
+      const existing = [...this.jobs.values()].find(j => j.input.checkExisting && ['queued', 'running'].includes(j.status));
+      if (existing) return this.get(existing.id);
+    }
     if (input.hash && !recovery.length) {
       const existing = [...this.jobs.values()].find(j => j.input.hash === input.hash && (j.input.event ?? 'completed') === (input.event ?? 'completed') && j.status !== 'failed');
       if (existing) return this.get(existing.id);

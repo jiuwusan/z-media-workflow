@@ -132,7 +132,9 @@ curl -q --fail --silent --show-error --connect-timeout 5 --max-time 15 --retry 2
 
 纯 v2 种子用 `%J` 替换 `%I`。回调认证启用时，面板提供独立 curl 配置文件模板，需部署到 qBittorrent 容器内。
 
-回调创建文件检查任务：等待种子文件列表可用（磁力链接等待元数据，默认最多 120 秒，可用 `TORRENT_FILES_TIMEOUT_MS` 调整），仅检查视频文件 basename 中有 `E01` / `EP01` 等集号、没有 `S01E01` / `S01EP01` 等季集号的文件。季号由 DeepSeek 结合种子名、文件路径及作品信息判断；不默认第一季，只有高置信度判断才重命名，无法确定则跳过。同目录、同标题且年份及发布标签相同的文件在一轮内复用季号判断。
+回调创建文件检查任务：先读取 qBittorrent 分类，仅处理分类名称包含 `series` 的种子（不区分大小写，例如 `series`、`pure-series`、`SUPER-SERIES`）；未分类或其他分类直接跳过，不读取文件列表或调用 AI。等待种子文件列表可用（磁力链接等待元数据，默认最多 120 秒，可用 `TORRENT_FILES_TIMEOUT_MS` 调整），仅检查视频文件 basename 中有 `E01` / `EP01` 等集号、没有 `S01E01` / `S01EP01` 等季集号的文件。季号由 DeepSeek 结合种子名、文件路径及作品信息判断；不默认第一季，只有高置信度判断才重命名，无法确定则跳过。同目录、同标题且年份及发布标签相同的文件在一轮内复用季号判断。重命名前再次检查分类，若已不包含 `series` 则停止改名。
+
+在“连接与通知 → 新增种子通知”点击“检查已有种子”，会创建一个批量任务，依次检查全部符合分类条件的已有种子，包括下载中、已暂停和已完成种子；不依赖通知开关。单个种子失败不阻断后续种子，详情标明所属种子与错误。任务排队或执行期间重复点击返回同一任务，完成后可再次检查；已经规范的文件不会重复改名。此按钮使用管理员登录及 CSRF 校验，不通过免认证回调执行全量检查。
 
 例如：`Journey.to.the.West.II.E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv` → `Journey.to.the.West.S02E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv`。AI 只能请求移除标题尾部明确的季号标记，不能改写其他标题、年份、质量标签或目录。
 
@@ -223,6 +225,7 @@ scripts/          通知与只读联通检查
 | GET / PUT | `/api/qbittorrent/completion-notification` | 读取/保存下载完成通知 `{ enabled, program }` |
 | GET / PUT | `/api/qbittorrent/added-notification` | 读取/保存新增种子通知 `{ enabled, program }` |
 | POST | `/api/webhooks/qbittorrent/added` | 新增种子文件检查 `{ hash }`，返回任务；使用回调认证设置 |
+| POST | `/api/workflows/check-torrents` | 管理员检查已有种子，无参数；仅检查分类包含 `series` 的种子 |
 | POST | `/api/connections/check` | 三方只读连接检查 |
 | GET | `/api/qbittorrent/rss` | 订阅树与文章 |
 | POST / DELETE | `/api/qbittorrent/rss/feeds` | 添加/删除订阅 |
