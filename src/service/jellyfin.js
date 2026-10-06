@@ -1,6 +1,8 @@
 import { createHttpClient, sleep } from '../util/http.js';
 import { AppError } from '../util/error.js';
 import { normalizeName, providerEntries } from '../util/media.js';
+// UpdateItem replaces these values, so load the editable DTO before changing identification.
+const metadataFields = 'Path,ProviderIds,OriginalTitle,CustomRating,DateCreated,Genres,Overview,People,ProductionLocations,Settings,SortName,SpecialEpisodeNumbers,Studios,Taglines,Tags,AirTime,RemoteTrailers,MediaStreams';
 function premiereYear(item) {
   const year = new Date(item.PremiereDate ?? '').getUTCFullYear();
   return Number.isInteger(year) && year >= 1800 && year <= new Date().getFullYear() + 5 ? year : undefined;
@@ -49,9 +51,9 @@ export class JellyfinService {
     }
     return items;
   }
-  async item(id) {
+  async item(id, { metadata = false } = {}) {
     // GetItem requires a user context on some servers; the global query supports API keys.
-    const result = await this.http('Items', { query: { Ids: id, Fields: 'Path,ProviderIds,OriginalTitle', Limit: 1 } });
+    const result = await this.http('Items', { query: { Ids: id, Fields: metadata ? metadataFields : 'Path,ProviderIds,OriginalTitle', Limit: 1 } });
     if (!result.Items?.length) throw new AppError('Jellyfin 媒体条目不存在', 404);
     return result.Items[0];
   }
@@ -64,10 +66,22 @@ export class JellyfinService {
       return year === undefined ? candidate : { ...candidate, ProductionYear: year };
     });
   }
-  async apply(id, candidate) {
-    await this.http(`Items/RemoteSearch/Apply/${encodeURIComponent(id)}`, { method: 'POST', query: { ReplaceAllImages: false }, json: candidate });
+  async apply(id, candidate, expected) {
+    // RemoteSearch/Apply waits for provider downloads; UpdateItem only saves local metadata.
+    const item = await this.item(id, { metadata: true });
+    if (typeof item.LockData !== 'boolean') throw new AppError('Jellyfin 未返回完整编辑设置，无法安全保存识别结果', 502);
+    if (expected && (item.Path !== expected.Path || item.Type !== expected.Type)) throw new AppError('媒体路径或类型已变化，请重新扫描', 409);
+    if (!candidate.Name?.trim() || !providerEntries(candidate).length) throw new AppError('候选缺少有效媒体名称或提供方 ID', 422);
+    if (item.Type === 'Series') {
+      // UpdateItem propagates parent ratings to children even when the ratings are unchanged.
+      const children = await this.items({ ParentId: id, IncludeItemTypes: 'Season,Episode', Fields: 'CustomRating,Settings' });
+      const wouldOverwrite = children.some(child => (child.CustomRating && child.CustomRating !== item.CustomRating) || (child.OfficialRating && child.OfficialRating !== item.OfficialRating && !child.LockedFields?.includes('OfficialRating')));
+      if (wouldOverwrite) throw new AppError('季或集存在独立评级，无法安全保存节目识别结果，请先在 Jellyfin 处理评级设置', 409);
+    }
+    const update = { ...item, Name: candidate.Name, ProviderIds: structuredClone(candidate.ProviderIds), ...(candidate.ProductionYear == null ? {} : { ProductionYear: candidate.ProductionYear }) };
+    await this.http(`Items/${encodeURIComponent(id)}`, { method: 'POST', json: update });
   }
-  refreshItem(id) { return this.http(`Items/${encodeURIComponent(id)}/Refresh`, { method: 'POST', query: { Recursive: true, MetadataRefreshMode: 'Default', ImageRefreshMode: 'Default', ReplaceAllMetadata: false, ReplaceAllImages: false } }); }
+  refreshItem(id, { full = false } = {}) { return this.http(`Items/${encodeURIComponent(id)}/Refresh`, { method: 'POST', query: { Recursive: true, MetadataRefreshMode: full ? 'FullRefresh' : 'Default', ImageRefreshMode: full ? 'FullRefresh' : 'Default', ReplaceAllMetadata: full, ReplaceAllImages: false } }); }
   async verify(id, candidate) {
     const expected = providerEntries(candidate);
     if (!expected.length) throw new AppError('候选缺少有效媒体提供方 ID', 422);

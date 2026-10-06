@@ -27,11 +27,40 @@ test('dry run does not write metadata and can later confirm stored candidate', a
   workflow.confirm(job.id, 'm', result.items[0].candidates[0].candidateId);
   result = await done(workflow, job); assert.equal(result.status, 'completed'); assert.deepEqual(events, ['scan', 'apply']);
 });
-test('failed verification marks task failed and hash can be retried', async () => {
-  const { workflow, deps } = fixture(); deps.jellyfin.verify = async () => { throw new Error('回读不匹配'); };
+test('failed application marks task failed and hash can be retried', async () => {
+  const { workflow, deps } = fixture(); deps.jellyfin.apply = async () => { throw new Error('应用失败'); };
   const job = workflow.enqueue({ hash: 'b'.repeat(40) }); assert.equal((await done(workflow, job)).status, 'failed');
-  deps.jellyfin.verify = async () => ({ ...movie, ...candidate });
+  deps.jellyfin.apply = async () => {};
   const next = workflow.retry(job.id); assert.equal((await done(workflow, next)).status, 'completed');
+});
+test('successful application completes and advances cursor without reading unfinished metadata', async () => {
+  const { workflow, deps } = fixture(); let confirmed = 0;
+  deps.jellyfin.verify = async () => { throw new Error('metadata is still loading'); };
+  deps.jellyfin.item = async () => { throw new Error('metadata readback must not be called'); };
+  deps.mediaLibrary.markIdentified = () => { confirmed++; };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'completed'); assert.equal(confirmed, 1);
+  assert.deepEqual(result.items[0].confirmed, candidate);
+});
+test('application failure keeps cursor pending and does not claim a confirmed result', async () => {
+  const { workflow, deps } = fixture(); let confirmed = 0;
+  deps.jellyfin.apply = async () => { throw new Error('apply rejected'); };
+  deps.mediaLibrary.markIdentified = () => { confirmed++; };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'failed'); assert.equal(confirmed, 0);
+  assert.equal(result.items[0].confirmed, undefined);
+});
+test('series refresh request failure is a warning after successful identification', async () => {
+  const { workflow, deps } = fixture(); let confirmed = 0;
+  const series = { ...movie, Type: 'Series', Path: '/media/series/Dune.2021' };
+  deps.mediaLibrary.unidentified = async () => ({ items: [series], total: 1 });
+  deps.mediaLibrary.ensureItem = async () => series;
+  deps.mediaLibrary.markIdentified = () => { confirmed++; };
+  deps.jellyfin.verify = async () => { throw new Error('must not await metadata'); };
+  deps.jellyfin.refreshItem = async () => { throw new Error('refresh request failed'); };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'completed'); assert.equal(confirmed, 1);
+  assert.match(result.items[0].refreshWarning, /refresh request failed/);
 });
 test('renamed media cannot apply a candidate from an old preview', async () => {
   const { workflow, deps, events } = fixture();
@@ -49,7 +78,7 @@ test('ambiguous candidates are preserved without auto apply and partial errors r
   deps.jellyfin.search = async () => [candidate, { ...candidate, ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }];
   const result = await done(workflow, workflow.enqueue({})); assert.equal(result.status, 'needs_review'); assert.equal(result.items[1].status, 'failed'); assert.equal(result.items[0].candidates.length, 2); assert.deepEqual(events, ['scan']);
 });
-test('AI resolves ambiguous candidates and existing readback still confirms the applied result', async () => {
+test('AI resolves ambiguous candidates and successful application confirms the selected result', async () => {
   const { workflow, deps, events } = fixture(); let calls = 0;
   deps.deepseek.identify = async () => ({ name: 'Dune', year: null });
   deps.jellyfin.search = async () => [candidate, { ...candidate, ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }];
@@ -127,12 +156,11 @@ test('library discovery follows additions and deletions and ignores legacy fixed
   await assert.rejects(service.unidentified({ libraryId: 'music' }), /媒体库/);
 });
 
-test('retry re-verifies failed applied candidate even when provider IDs already exist', async () => {
+test('retry resubmits the selected candidate after uncertain application despite existing provider IDs', async () => {
   let applied = false, attempts = 0;
   const { workflow, deps } = fixture();
   deps.mediaLibrary.unidentified = async () => ({ items: applied ? [] : [movie], total: applied ? 0 : 1 });
-  deps.jellyfin.apply = async () => { applied = true; };
-  deps.jellyfin.verify = async () => { attempts++; if (attempts === 1) throw new Error('wrong title despite provider IDs'); return { ...movie, ...candidate }; };
+  deps.jellyfin.apply = async () => { applied = true; if (++attempts === 1) throw new Error('apply response lost despite provider IDs'); };
   const original = workflow.enqueue({ hash: 'c'.repeat(40) }); assert.equal((await done(workflow, original)).status, 'failed');
   const retried = await done(workflow, workflow.retry(original.id));
   assert.equal(attempts, 2); assert.equal(retried.items[0].confirmed.Name, 'Dune'); assert.equal(retried.status, 'completed');
@@ -201,15 +229,14 @@ test('manual scan preserves selected library, media type and item IDs', async ()
 });
 
 test('recovery survives a second retry failing before items are discovered', async () => {
-  let applied = false, verifies = 0, scans = 0;
+  let applied = false, attempts = 0, scans = 0;
   const { workflow, deps } = fixture();
   deps.mediaLibrary.unidentified = async () => ({ items: applied ? [] : [movie], total: applied ? 0 : 1 });
   deps.jellyfin.refreshAndWait = async () => { if (++scans === 2) throw new Error('scan failed'); };
-  deps.jellyfin.apply = async () => { applied = true; };
-  deps.jellyfin.verify = async () => { if (++verifies === 1) throw new Error('bad title'); return { ...movie, ...candidate }; };
+  deps.jellyfin.apply = async () => { applied = true; if (++attempts === 1) throw new Error('apply response lost'); };
   const first = workflow.enqueue({ hash: 'e'.repeat(40) }); await done(workflow, first);
   const second = workflow.retry(first.id); assert.equal((await done(workflow, second)).status, 'failed');
-  const third = await done(workflow, workflow.retry(second.id)); assert.equal(third.status, 'completed'); assert.equal(verifies, 2); assert.equal(third.items[0].confirmed.Name, 'Dune');
+  const third = await done(workflow, workflow.retry(second.id)); assert.equal(third.status, 'completed'); assert.equal(attempts, 2); assert.equal(third.items[0].confirmed.Name, 'Dune');
 });
 
 test('selective download ignores priority zero videos when checking missing paths', async () => {

@@ -34,13 +34,13 @@ test('failed synchronous save does not advance the in-memory cursor or overwrite
   assert.equal(store.needsIdentification(item), true);
   assert.equal(new MediaCursorStore(filename).needsIdentification(item), true);
 });
-test('workflow only confirms after readback; failed and preview media survive service restart', async t => {
+test('workflow confirms after successful application; failed and preview media survive service restart', async t => {
   const filename = file(t), items = [media('preview'), media('failed')];
   const candidate = { Name: 'Dune', ProductionYear: 2021, ProviderIds: { Tmdb: '438631' } };
   const jellyfin = {
     libraries: async () => [{ ItemId: 'movies', CollectionType: 'movies', Locations: ['/media'] }],
-    items: async () => items, refreshAndWait: async () => {}, search: async () => [candidate], apply: async () => {},
-    verify: async () => { throw new Error('readback failed'); }
+    items: async () => items, refreshAndWait: async () => {}, search: async () => [candidate], apply: async () => { throw new Error('apply failed'); },
+    verify: async () => { throw new Error('metadata is still loading'); }
   };
   const config = { mediaCursorFile: filename, jellyfinUrl: 'http://mock/', maxJobs: 10, maxQueue: 5, jobTtlMs: 60000 };
   const service = new MediaLibraryService(config, jellyfin);
@@ -54,7 +54,7 @@ test('workflow only confirms after readback; failed and preview media survive se
   assert.equal((await finish({ itemIds: ['failed'] })).status, 'failed');
   const reopened = new MediaLibraryService(config, jellyfin);
   assert.deepEqual((await reopened.unidentified()).items.map(i => i.Id), ['preview', 'failed']);
-  jellyfin.verify = async () => candidate;
+  jellyfin.apply = async () => {};
   assert.equal((await finish({ itemIds: ['failed'] })).status, 'completed');
   assert.deepEqual((await new MediaLibraryService(config, jellyfin).unidentified()).items.map(i => i.Id), ['preview']);
 });

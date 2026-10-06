@@ -11,8 +11,9 @@ import { createApp } from '../src/app.js';
 test('panel login, RSS rules, preview, manual confirmation, responsive navigation and logout', { timeout: 90000 }, async t => {
   const libId = '1'.repeat(32), itemId = '2'.repeat(32), changes = [], errors = [];
   const libraryList = [{ Name: 'movie', ItemId: libId, CollectionType: 'movies', Locations: ['/media/movies'] }];
-  let scan = 0, applied = null, rules = {}, notification = { autorun_enabled: false, autorun_program: '' };
-  const item = () => ({ Id: itemId, Type: 'Movie', DateCreated: '2026-10-05T00:00:00Z', Name: applied?.Name ?? 'Dune.2021.1080p', ProductionYear: applied?.ProductionYear, Path: '/media/movies/Dune.2021.1080p.mkv', ProviderIds: applied?.ProviderIds ?? { Tmdb: 'wrong-self-identification' } });
+  let scan = 0, readbacks = 0, applied = null, rules = {}, notification = { autorun_enabled: false, autorun_program: '' };
+  // Simulate metadata that remains unchanged after Jellyfin accepts the chosen candidate.
+  const item = () => ({ Id: itemId, Type: 'Movie', DateCreated: '2026-10-05T00:00:00Z', Name: 'Dune.2021.1080p', Path: '/media/movies/Dune.2021.1080p.mkv', ProviderIds: { Tmdb: 'wrong-self-identification' }, LockData: false, LockedFields: [], Tags: [], Genres: [] });
   const upstream = createServer(async (req, res) => {
     let raw = ''; for await (const d of req) raw += d;
     const url = new URL(req.url, 'http://mock'), route = url.pathname;
@@ -29,9 +30,10 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
     if (route === '/jelly/System/Info') return json({ Version: '10.11.11' });
     if (route === '/jelly/ScheduledTasks') return json([{ Id: 'scan-task', Key: 'RefreshLibrary', State: 'Idle', LastExecutionResult: { EndTimeUtc: `end-${scan}`, Status: 'Completed' } }]);
     if (route === '/jelly/Library/Refresh') { scan++; res.end(''); return; }
-    if (route === '/jelly/Items') return json(url.searchParams.get('ParentId') === '3'.repeat(32) ? { Items: [], TotalRecordCount: 0 } : { Items: [item()], TotalRecordCount: 1 });
+    if (route === '/jelly/Items') { if (url.searchParams.has('Ids') && applied) readbacks++; return json(url.searchParams.get('ParentId') === '3'.repeat(32) ? { Items: [], TotalRecordCount: 0 } : { Items: [item()], TotalRecordCount: 1 }); }
     if (route === '/jelly/Items/RemoteSearch/Movie') return json([{ Name: 'Dune', ProductionYear: 2021, ProviderIds: { Tmdb: '438631' } }, { Name: 'Dune', ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }]);
-    if (route === `/jelly/Items/RemoteSearch/Apply/${itemId}`) { applied = JSON.parse(raw); changes.push('apply'); res.end(''); return; }
+    if (route === `/jelly/Items/${itemId}` && req.method === 'POST') { applied = JSON.parse(raw); changes.push('apply'); res.end(''); return; }
+    if (route === `/jelly/Items/${itemId}/Refresh`) { res.end(''); return; }
     if (route === '/deep/models') return json({ data: [{ id: 'deepseek-flash' }] });
     if (route === '/deep/chat/completions') {
       const input = JSON.parse(raw), content = input.messages[1].content;
@@ -96,6 +98,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByRole('button', { name: '重新搜索' }).click(); await page.getByRole('button', { name: '确认此候选' }).first().waitFor();
   await page.getByRole('button', { name: '确认此候选' }).first().click(); await page.getByRole('button', { name: '确认并应用', exact: true }).click();
   await page.getByText('已确认：Dune', { exact: false }).waitFor(); assert.equal(applied.ProviderIds.Tmdb, '438631');
+  assert.equal(readbacks, 0, 'metadata readback is not required to complete identification');
   await page.getByRole('link', { name: '媒体识别', exact: true }).click();
   await page.getByText('当前没有未识别媒体。新下载入库后可再次检查。', { exact: true }).waitFor();
   await page.getByRole('link', { name: '连接与通知', exact: true }).click(); await page.getByRole('heading', { name: '下载完成通知' }).waitFor();

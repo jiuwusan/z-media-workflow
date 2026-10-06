@@ -117,15 +117,14 @@ export class WorkflowService {
     if (item.Path !== entry.path) throw new AppError('媒体路径已变化，请重新扫描', 409);
     this.update(job, `应用候选：${candidate.Name}`); entry.status = 'running';
     const { candidateId, ...remote } = candidate;
-    // Apply is intentionally not retried blindly; failed responses may still have changed metadata.
-    try { await this.services.jellyfin.apply(entry.itemId, remote); }
-    catch (error) { entry.applyWarning = redact(error.message, this.secrets); }
-    this.update(job, '回读确认媒体信息');
-    const confirmed = await this.services.jellyfin.verify(entry.itemId, remote);
-    entry.confirmed = { Name: confirmed.Name, ProductionYear: confirmed.ProductionYear, ProviderIds: confirmed.ProviderIds };
-    if (entry.type === 'Series') await this.services.jellyfin.refreshItem(entry.itemId);
+    // Successful submission completes identification; Jellyfin loads metadata asynchronously.
+    await this.services.jellyfin.apply(entry.itemId, remote, item);
     this.services.mediaLibrary.markIdentified(item);
+    entry.confirmed = { Name: remote.Name, ProductionYear: remote.ProductionYear, ProviderIds: structuredClone(remote.ProviderIds) };
     entry.status = 'completed'; delete entry.error; delete entry.message;
+    this.update(job, '提交后台元数据刷新');
+    try { await this.services.jellyfin.refreshItem(entry.itemId, { full: true }); }
+    catch (error) { entry.refreshWarning = redact(error.message, this.secrets); }
   }
   retry(id) {
     const job = this.get(id), failed = job.items.filter(i => i.status === 'failed');
