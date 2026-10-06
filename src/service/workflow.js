@@ -82,11 +82,22 @@ export class WorkflowService {
         if (previous && (previous.path !== item.Path || (previous.libraryId && previous.libraryId !== item.LibraryId))) throw new AppError('媒体路径或媒体库已变化，请重新扫描', 409);
         if (previous?.selectedCandidate) {
           entry.identity = previous.identity; entry.candidates = previous.candidates;
+          entry.selectionMethod = previous.selectionMethod; entry.aiDecision = previous.aiDecision;
           await this.applyCandidate(job, entry, previous.selectedCandidate); continue;
         }
         this.update(job, `提取名称：${entry.source}`); entry.identity = await this.services.deepseek.identify(entry.source, item.Type);
         await this.findCandidates(job, entry, item);
-        const selected = selectCandidate(entry.identity, entry.candidates);
+        let selected = selectCandidate(entry.identity, entry.candidates);
+        if (selected) entry.selectionMethod = 'rules';
+        else if (entry.candidates.length) {
+          this.update(job, `AI 判断候选：${entry.identity.name}`);
+          try {
+            const decision = await this.services.deepseek.chooseCandidate(entry.source, entry.type, entry.identity, entry.candidates);
+            entry.aiDecision = { ...decision, reason: redact(decision.reason, this.secrets) };
+            selected = decision.confidence === 'high' ? entry.candidates.find(c => c.candidateId === decision.candidateId && (entry.identity.year == null || c.ProductionYear === entry.identity.year)) : null;
+            if (selected) entry.selectionMethod = 'ai';
+          } catch (error) { entry.aiDecisionError = redact(error.message, this.secrets); }
+        }
         if (job.input.dryRun || !selected) { entry.status = 'needs_review'; entry.message = job.input.dryRun ? '预览完成，选择候选后确认应用' : '没有唯一可靠候选，请人工确认或修改搜索名称'; }
         else await this.applyCandidate(job, entry, selected);
       } catch (error) { entry.status = 'failed'; entry.error = redact(error.message, this.secrets); }
@@ -135,11 +146,11 @@ export class WorkflowService {
   confirm(id, itemId, candidateId) {
     const { job, entry } = this.reviewEntry(id, itemId), candidate = entry.candidates.find(c => c.candidateId === candidateId);
     if (!candidate) throw new AppError('候选不存在，请重新加载任务');
-    return this.queueAction(job, async () => { try { await this.applyCandidate(job, entry, candidate); } catch (error) { entry.status = 'failed'; entry.error = redact(error.message, this.secrets); } });
+    return this.queueAction(job, async () => { try { entry.selectionMethod = 'manual'; await this.applyCandidate(job, entry, candidate); } catch (error) { entry.status = 'failed'; entry.error = redact(error.message, this.secrets); } });
   }
   search(id, itemId, identity) {
     const { job, entry } = this.reviewEntry(id, itemId); const valid = validateIdentity(identity);
-    return this.queueAction(job, async () => { const item = await this.services.mediaLibrary.ensureItem(itemId, { libraryId: entry.libraryId ?? job.input.libraryId, type: entry.type }); entry.identity = valid; await this.findCandidates(job, entry, item); entry.status = 'needs_review'; });
+    return this.queueAction(job, async () => { const item = await this.services.mediaLibrary.ensureItem(itemId, { libraryId: entry.libraryId ?? job.input.libraryId, type: entry.type }); entry.identity = valid; delete entry.aiDecision; delete entry.aiDecisionError; delete entry.selectionMethod; await this.findCandidates(job, entry, item); entry.status = 'needs_review'; });
   }
   async close(timeoutMs = 30000) { this.stopping = true; const end = Date.now() + timeoutMs; while (this.running && Date.now() < end) await sleep(25); return !this.running; }
 }

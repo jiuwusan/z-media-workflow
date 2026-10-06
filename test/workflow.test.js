@@ -49,6 +49,46 @@ test('ambiguous candidates are preserved without auto apply and partial errors r
   deps.jellyfin.search = async () => [candidate, { ...candidate, ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }];
   const result = await done(workflow, workflow.enqueue({})); assert.equal(result.status, 'needs_review'); assert.equal(result.items[1].status, 'failed'); assert.equal(result.items[0].candidates.length, 2); assert.deepEqual(events, ['scan']);
 });
+test('AI resolves ambiguous candidates and existing readback still confirms the applied result', async () => {
+  const { workflow, deps, events } = fixture(); let calls = 0;
+  deps.deepseek.identify = async () => ({ name: 'Dune', year: null });
+  deps.jellyfin.search = async () => [candidate, { ...candidate, ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }];
+  deps.deepseek.chooseCandidate = async (source, type, identity, candidates) => {
+    calls++; assert.equal(source, 'Dune.2021'); assert.equal(type, 'Movie'); assert.equal(identity.year, null);
+    return { candidateId: candidates[0].candidateId, confidence: 'high', reason: '原始文件名明确为2021年版本' };
+  };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(calls, 1); assert.equal(result.status, 'completed');
+  assert.equal(result.items[0].selectionMethod, 'ai'); assert.match(result.items[0].aiDecision.reason, /2021/);
+  assert.deepEqual(events, ['scan', 'apply']);
+});
+test('unique rule matches do not require a second AI request', async () => {
+  const { workflow, deps } = fixture();
+  deps.deepseek.chooseCandidate = async () => { throw new Error('must not call AI'); };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'completed'); assert.equal(result.items[0].selectionMethod, 'rules');
+});
+test('AI uncertainty, invalid IDs, year conflicts and upstream errors fall back to review', async () => {
+  for (const response of ['uncertain', 'forged', 'year-conflict', 'error']) {
+    const { workflow, deps, events } = fixture();
+    deps.jellyfin.search = async () => [{ ...candidate, Name: '沙丘' }, { ...candidate, Name: '沙丘', ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }];
+    deps.deepseek.chooseCandidate = async (source, type, identity, candidates) => {
+      if (response === 'error') throw new Error('AI unavailable');
+      return { candidateId: response === 'forged' ? 'forged' : candidates[response === 'year-conflict' ? 1 : 0].candidateId, confidence: response === 'uncertain' ? 'low' : 'high', reason: response };
+    };
+    const result = await done(workflow, workflow.enqueue({}));
+    assert.equal(result.status, 'needs_review'); assert.deepEqual(events, ['scan']);
+  }
+});
+test('AI recommendation in preview does not apply metadata or advance the cursor', async () => {
+  const { workflow, deps, events } = fixture(); let confirmed = 0;
+  deps.jellyfin.search = async () => [{ ...candidate, Name: '沙丘' }];
+  deps.mediaLibrary.markIdentified = () => { confirmed++; };
+  deps.deepseek.chooseCandidate = async (source, type, identity, candidates) => ({ candidateId: candidates[0].candidateId, confidence: 'high', reason: '对应英文原名' });
+  const result = await done(workflow, workflow.enqueue({ dryRun: true }));
+  assert.equal(result.status, 'needs_review'); assert.equal(result.items[0].selectionMethod, 'ai');
+  assert.equal(confirmed, 0); assert.deepEqual(events, ['scan']);
+});
 test('media scope locates Series for downloaded season episode and rejects unknown libraries', async () => {
   const jelly = { libraries: async () => [{ ItemId: 's', CollectionType: 'tvshows', Locations: ['/media/series'] }, { ItemId: 'l', CollectionType: 'movies', Locations: ['/media/movies'] }], items: async query => query.ParentId === 's' ? [{ Id: 'series', Type: 'Series', Path: '/media/series/三体', ProviderIds: {} }] : [movie] };
   const lib = new MediaLibraryService({ ...config, pathMapping: { from: '/downloads', to: '/media' } }, jelly);

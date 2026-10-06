@@ -30,10 +30,15 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
     if (route === '/jelly/ScheduledTasks') return json([{ Id: 'scan-task', Key: 'RefreshLibrary', State: 'Idle', LastExecutionResult: { EndTimeUtc: `end-${scan}`, Status: 'Completed' } }]);
     if (route === '/jelly/Library/Refresh') { scan++; res.end(''); return; }
     if (route === '/jelly/Items') return json(url.searchParams.get('ParentId') === '3'.repeat(32) ? { Items: [], TotalRecordCount: 0 } : { Items: [item()], TotalRecordCount: 1 });
-    if (route === '/jelly/Items/RemoteSearch/Movie') return json([{ Name: 'Dune', ProductionYear: 2021, ProviderIds: { Tmdb: '438631' } }]);
+    if (route === '/jelly/Items/RemoteSearch/Movie') return json([{ Name: 'Dune', ProductionYear: 2021, ProviderIds: { Tmdb: '438631' } }, { Name: 'Dune', ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }]);
     if (route === `/jelly/Items/RemoteSearch/Apply/${itemId}`) { applied = JSON.parse(raw); changes.push('apply'); res.end(''); return; }
     if (route === '/deep/models') return json({ data: [{ id: 'deepseek-flash' }] });
-    if (route === '/deep/chat/completions') return json({ choices: [{ finish_reason: 'stop', message: { content: '{"name":"Dune","year":2021}' } }] });
+    if (route === '/deep/chat/completions') {
+      const input = JSON.parse(raw), content = input.messages[1].content;
+      const data = content.startsWith('{') ? JSON.parse(content) : null;
+      const result = data?.candidates ? { candidateId: data.candidates.find(c => c.ProductionYear === 2021).candidateId, confidence: 'high', reason: '原始文件名明确标注2021年，可区分1984年版本' } : { name: 'Dune', year: null };
+      return json({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] });
+    }
     res.statusCode = 404; res.end('missing');
   }).listen(0, '127.0.0.1');
   await new Promise(r => upstream.once('listening', r)); t.after(() => upstream.close());
@@ -85,10 +90,11 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   libraryList.pop(); await page.getByRole('button', { name: '刷新列表', exact: true }).click();
   await page.getByText('Dune.2021.1080p', { exact: true }).waitFor();
   assert.equal(await page.locator('.el-select__selected-item').getByText('全部目标库', { exact: true }).count(), 1);
-  await page.getByRole('button', { name: '预览候选', exact: true }).click(); await page.getByRole('button', { name: '确认此候选' }).waitFor();
+  await page.getByRole('button', { name: '预览候选', exact: true }).click(); await page.getByRole('button', { name: '确认此候选' }).first().waitFor();
+  await page.getByText('AI 推荐', { exact: true }).waitFor(); await page.getByText('原始文件名明确标注2021年，可区分1984年版本', { exact: false }).waitFor();
   assert.equal(applied, null); await page.getByRole('textbox', { name: '搜索媒体名称' }).fill('Dune');
-  await page.getByRole('button', { name: '重新搜索' }).click(); await page.getByRole('button', { name: '确认此候选' }).waitFor();
-  await page.getByRole('button', { name: '确认此候选' }).click(); await page.getByRole('button', { name: '确认并应用', exact: true }).click();
+  await page.getByRole('button', { name: '重新搜索' }).click(); await page.getByRole('button', { name: '确认此候选' }).first().waitFor();
+  await page.getByRole('button', { name: '确认此候选' }).first().click(); await page.getByRole('button', { name: '确认并应用', exact: true }).click();
   await page.getByText('已确认：Dune', { exact: false }).waitFor(); assert.equal(applied.ProviderIds.Tmdb, '438631');
   await page.getByRole('link', { name: '媒体识别', exact: true }).click();
   await page.getByText('当前没有未识别媒体。新下载入库后可再次检查。', { exact: true }).waitFor();
