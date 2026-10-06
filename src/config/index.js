@@ -29,6 +29,7 @@ export function loadConfig(env = process.env) {
     mediaCursorFile: env.MEDIA_CURSOR_FILE?.trim() || 'data/media-cursors.json',
     requestTimeoutMs: number('REQUEST_TIMEOUT_MS', 15000), pollMs: number('POLL_INTERVAL_MS', 2000),
     scanTimeoutMs: number('SCAN_TIMEOUT_MS', 600000), verifyTimeoutMs: number('VERIFY_TIMEOUT_MS', 120000),
+    torrentFilesTimeoutMs: number('TORRENT_FILES_TIMEOUT_MS', 120000),
     ingestRetries: number('INGEST_RETRIES', 2, 0, 5), maxJobs: number('MAX_JOBS', 200, 10, 10000), maxQueue: number('MAX_QUEUE', 30, 1, 1000),
     jobTtlMs: number('JOB_TTL_MS', 86400000), shutdownMs: number('SHUTDOWN_TIMEOUT_MS', 30000)
   };

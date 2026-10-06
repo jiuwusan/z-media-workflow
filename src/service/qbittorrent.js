@@ -3,6 +3,17 @@ import { AppError } from '../util/error.js';
 export class QbittorrentService {
   constructor(config, http) { this.http = http ?? createHttpClient({ baseUrl: `${config.qbtUrl}api/v2/`, headers: { Authorization: `Bearer ${config.qbtKey}` }, timeoutMs: config.requestTimeoutMs }); }
   version() { return this.http('app/version'); }
+  async addedNotification() {
+    const prefs = await this.http('app/preferences');
+    return { enabled: prefs.autorun_on_torrent_added_enabled === true, program: prefs.autorun_on_torrent_added_program ?? '' };
+  }
+  async setAddedNotification({ enabled, program }) {
+    await this.http('app/setPreferences', { method: 'POST', form: { json: JSON.stringify({ autorun_on_torrent_added_enabled: enabled, autorun_on_torrent_added_program: program }) } });
+    const saved = await this.addedNotification();
+    if (saved.enabled !== enabled || saved.program !== program) throw new AppError('qBittorrent 新增通知设置回读不一致，请重新读取配置', 502);
+    return saved;
+  }
+  renameFile(hash, oldPath, newPath) { return this.http('torrents/renameFile', { method: 'POST', form: { hash, oldPath, newPath } }); }
   async completionNotification() {
     const prefs = await this.http('app/preferences');
     return { enabled: prefs.autorun_enabled === true, program: prefs.autorun_program ?? '' };

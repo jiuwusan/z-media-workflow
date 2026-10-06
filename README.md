@@ -110,7 +110,7 @@ AI 仅从原始文件名或文件夹名清洗提取名称和年份，不借助�
 | series | 电视剧 | `/MediasVol3/series` |
 | movie | 电影 | `/MediasVol3/movies` |
 
-qBittorrent 默认目录是 `/MediasVol3/downloads`，它不属于上述媒体库。**请在 qBittorrent 中配置下载分类的保存目录，再在 RSS 规则中选择该分类，确保实际下载路径位于电影或电视剧媒体库内**，或先自行整理文件到库目录。服务不移动、重命名、删除媒体文件。电视剧每个剧集使用独立文件夹，Season 子文件夹和单集会按所属 Series 根目录识别；电影按每个视频文件名识别。
+qBittorrent 默认目录是 `/MediasVol3/downloads`，它不属于上述媒体库。**请在 qBittorrent 中配置下载分类的保存目录，再在 RSS 规则中选择该分类，确保实际下载路径位于电影或电视剧媒体库内**，或先自行整理文件到库目录。服务不直接移动或删除媒体文件；启用新增种子通知后，可通过 qBittorrent 规范缺少季号的视频文件名。电视剧每个剧集使用独立文件夹，Season 子文件夹和单集会按所属 Series 根目录识别；电影按每个视频文件名识别。
 
 下载完成通知后的识别直接使用 Jellyfin 媒体列表，不依赖 qBittorrent 与 Jellyfin 之间的路径映射。`QBT_PATH_PREFIX` 和 `JELLYFIN_PATH_PREFIX` 不再影响该流程。
 
@@ -120,13 +120,31 @@ qBittorrent 默认目录是 `/MediasVol3/downloads`，它不属于上述媒体�
 
 ## qBittorrent 下载完成通知
 
-在管理面板“连接与通知”中，可以读取 qBittorrent 当前的完成通知开关和命令、生成 Windows / Linux 命令模板、编辑后保存。保存只更新 `autorun_enabled` 与 `autorun_program`，并回读确认；生成模板不会自动保存。
+在管理面板“连接与通知”中，可以分别设置“新增种子通知”和“下载完成通知”。两种通知独立保存，并回读确认；生成模板不会自动保存。
+
+### 新增种子后规范文件名
+
+在“新增种子通知”中生成 curl 命令、启用并保存，对应 qBittorrent 的“新增 Torrent 时运行”。内网部署无需 Node.js、token 或配置文件，也可直接填写：
+
+```sh
+curl -q --fail --silent --show-error --connect-timeout 5 --max-time 15 --retry 2 --retry-connrefused --data-urlencode "hash=%I" "http://172.29.0.1:3000/api/webhooks/qbittorrent/added"
+```
+
+纯 v2 种子用 `%J` 替换 `%I`。回调认证启用时，面板提供独立 curl 配置文件模板，需部署到 qBittorrent 容器内。
+
+回调创建文件检查任务：等待种子文件列表可用（磁力链接等待元数据，默认最多 120 秒，可用 `TORRENT_FILES_TIMEOUT_MS` 调整），仅检查视频文件 basename 中有 `E01` / `EP01` 等集号、没有 `S01E01` / `S01EP01` 等季集号的文件。季号由 DeepSeek 结合种子名、文件路径及作品信息判断；不默认第一季，只有高置信度判断才重命名，无法确定则跳过。同目录、同标题且年份及发布标签相同的文件在一轮内复用季号判断。
+
+例如：`Journey.to.the.West.II.E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv` → `Journey.to.the.West.S02E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv`。AI 只能请求移除标题尾部明确的季号标记，不能改写其他标题、年份、质量标签或目录。
+
+服务通过 qBittorrent `torrents/renameFile` 修改种子内文件路径并回读确认，保持文件与下载任务关联，不直接操作宿主机文件。目标名称已存在时拒绝覆盖；规范过的文件不重复改名。新增事件不会触发 Jellyfin 扫描，也不更新媒体识别游标；下载完成通知仍独立触发原识别流程。面板任务详情显示原名、目标名、AI 判断、跳过原因和失败信息，失败任务可重试；任务记录不跨服务重启保留。
+
+下载完成通知保存只更新 `autorun_enabled` 与 `autorun_program`；新增通知保存只更新 `autorun_on_torrent_added_enabled` 与 `autorun_on_torrent_added_program`。
 
 当前 qBittorrent 容器的回调地址为 `http://172.29.0.1:3000/api/webhooks/qbittorrent/completed`。服务须监听 `0.0.0.0`，Docker 发布端口为 `3000:3000`，其内部端口仍为 `3000`。容器已有 curl 时使用下面的 curl 配置，不需要 Node.js 或通知脚本。纯 v2 torrent 将命令中的 `%I` 改为 `%J`；不要使用 `%K`（Torrent ID）。
 
 ### curl 通知（当前容器使用）
 
-当前内网部署设置 `WEBHOOK_AUTH_ENABLED=false`，仅取消下载完成回调的 token 校验，管理面板及管理 API 仍需认证。无需 `.env.notify.curl`，在“torrent 完成时运行”填写下面的单行命令，或在管理面板直接生成并保存：
+当前内网部署设置 `WEBHOOK_AUTH_ENABLED=false`，取消新增种子及下载完成回调的 token 校验，管理面板及管理 API 仍需认证。无需 `.env.notify.curl`，在“torrent 完成时运行”填写下面的单行命令，或在管理面板直接生成并保存：
 
 ```text
 curl -q --fail --silent --show-error --connect-timeout 5 --max-time 15 --retry 2 --retry-connrefused --data-urlencode "hash=%I" "http://172.29.0.1:3000/api/webhooks/qbittorrent/completed"
@@ -203,6 +221,8 @@ scripts/          通知与只读联通检查
 | GET | `/api/auth/session` | 会话和 CSRF token |
 | GET | `/api/dashboard` | 统计、目标库与脱敏配置 |
 | GET / PUT | `/api/qbittorrent/completion-notification` | 读取/保存下载完成通知 `{ enabled, program }` |
+| GET / PUT | `/api/qbittorrent/added-notification` | 读取/保存新增种子通知 `{ enabled, program }` |
+| POST | `/api/webhooks/qbittorrent/added` | 新增种子文件检查 `{ hash }`，返回任务；使用回调认证设置 |
 | POST | `/api/connections/check` | 三方只读连接检查 |
 | GET | `/api/qbittorrent/rss` | 订阅树与文章 |
 | POST / DELETE | `/api/qbittorrent/rss/feeds` | 添加/删除订阅 |

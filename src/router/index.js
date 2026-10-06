@@ -15,6 +15,8 @@ export function createRouter(config, services) {
   router.get('/api/dashboard', admin, system.dashboard);
   router.post('/api/connections/check', admin, system.check);
   router.get('/api/qbittorrent/completion-notification', admin, qbt.completionNotification);
+  router.get('/api/qbittorrent/added-notification', admin, qbt.addedNotification);
+  router.put('/api/qbittorrent/added-notification', admin, qbt.setAddedNotification);
   router.put('/api/qbittorrent/completion-notification', admin, qbt.setCompletionNotification);
   router.get('/api/qbittorrent/rss', admin, qbt.rss);
   router.get('/api/qbittorrent/categories', admin, qbt.categories);
@@ -25,6 +27,7 @@ export function createRouter(config, services) {
   router.put('/api/qbittorrent/rss/rules/:name', admin, qbt.setRule);
   router.delete('/api/qbittorrent/rss/rules/:name', admin, qbt.removeRule);
   router.post('/api/webhooks/qbittorrent/completed', webhook, workflow.completed);
+  router.post('/api/webhooks/qbittorrent/added', webhook, workflow.added);
   router.get('/api/media/unidentified', admin, workflow.unidentified);
   router.get('/api/workflows', admin, workflow.list);
   router.post('/api/workflows/scan', admin, workflow.scan);

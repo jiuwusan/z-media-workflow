@@ -20,6 +20,16 @@ test('serial workflow deduplicates hash and confirms applied metadata', async ()
   assert.equal(workflow.enqueue({ hash: 'a'.repeat(40) }).id, a.id);
   const result = await done(workflow, a); assert.equal(result.status, 'completed'); assert.deepEqual(events, ['scan', 'apply']); assert.equal(result.items[0].confirmed.ProviderIds.Tmdb, '438631');
 });
+
+test('added callback checks files without Jellyfin scanning and cannot deduplicate a completion event', async () => {
+  const { workflow, deps, events } = fixture(); let checks = 0;
+  deps.torrentNaming = { run: async job => { checks++; job.items.push({ itemId: '0', type: 'File', status: 'completed' }); } };
+  const input = { hash: 'a'.repeat(40), event: 'added' };
+  const added = workflow.enqueue(input); assert.equal(workflow.enqueue(input).id, added.id);
+  await done(workflow, added); assert.equal(checks, 1); assert.deepEqual(events, []);
+  const completion = workflow.enqueue({ hash: input.hash }); assert.notEqual(completion.id, added.id);
+  assert.equal((await done(workflow, completion)).status, 'completed'); assert.deepEqual(events, ['scan', 'apply']);
+});
 test('dry run does not write metadata and can later confirm stored candidate', async () => {
   const { workflow, events } = fixture(); const job = workflow.enqueue({ dryRun: true });
   let result = await done(workflow, job); assert.equal(result.status, 'needs_review'); assert.deepEqual(events, ['scan']);

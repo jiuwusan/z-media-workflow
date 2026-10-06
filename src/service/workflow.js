@@ -27,7 +27,7 @@ export class WorkflowService {
   enqueue(input = {}, recovery = []) {
     this.prune();
     if (input.hash && !recovery.length) {
-      const existing = [...this.jobs.values()].find(j => j.input.hash === input.hash && j.status !== 'failed');
+      const existing = [...this.jobs.values()].find(j => j.input.hash === input.hash && (j.input.event ?? 'completed') === (input.event ?? 'completed') && j.status !== 'failed');
       if (existing) return this.get(existing.id);
     }
     this.ensureCapacity();
@@ -54,6 +54,10 @@ export class WorkflowService {
     this.update(job, status === 'needs_review' ? '等待人工确认' : status === 'failed' ? '存在失败条目' : '完成', status);
   }
   async run(job) {
+    if (job.input.event === 'added') {
+      await this.services.torrentNaming.run(job, (job, stage) => this.update(job, stage));
+      this.recoveries.delete(job.id); return;
+    }
     const { jellyfin, qbittorrent, mediaLibrary } = this.services;
     const recovery = this.recoveries.get(job.id) ?? [];
     if (job.input.hash) {

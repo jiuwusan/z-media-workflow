@@ -3,6 +3,28 @@ import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config/index.js';
 const admin = 'admin-token-at-least-24-characters', webhook = 'webhook-token-at-least-24-characters';
+
+test('added callback validates hashes and uses webhook authentication', async t => {
+  const { req, config } = await setup(t);
+  const post = (hash, headers = {}) => req('/api/webhooks/qbittorrent/added', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ hash }) });
+  assert.equal((await post('a'.repeat(40))).status, 401);
+  assert.equal((await post('invalid', { Authorization: `Bearer ${webhook}` })).status, 400);
+  const response = await post('A'.repeat(40), { Authorization: `Bearer ${webhook}` });
+  assert.equal(response.status, 202); assert.deepEqual((await response.json()).data.input, { hash: 'a'.repeat(40), event: 'added' });
+  config.webhookAuthRequired = false; assert.equal((await post('b'.repeat(64))).status, 202);
+});
+
+test('added notification settings require login, CSRF and strict fields', async t => {
+  const { req, services, login } = await setup(t); let state = { enabled: false, program: '' };
+  services.qbittorrent.addedNotification = async () => state;
+  services.qbittorrent.setAddedNotification = async value => { state = value; return state; };
+  const route = '/api/qbittorrent/added-notification', headers = await login();
+  assert.equal((await req(route)).status, 401);
+  assert.equal((await req(route, { headers })).status, 200);
+  for (const body of [{ enabled: true, program: '' }, { enabled: true, program: 'curl\ncommand' }, { enabled: false, program: '', save_path: '/other' }]) assert.equal((await req(route, { method: 'PUT', headers, body: JSON.stringify(body) })).status, 400);
+  const response = await req(route, { method: 'PUT', headers, body: JSON.stringify({ enabled: true, program: 'curl added' }) });
+  assert.equal(response.status, 200); assert.deepEqual((await response.json()).data, { enabled: true, program: 'curl added' });
+});
 test('username/password login issues a session and rejects old admin bearer and token login', async t => {
   const { req, base, config } = await setup(t);
   config.adminUsername = 'admin'; config.adminPassword = 'correct-test-password-123';

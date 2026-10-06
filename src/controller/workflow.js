@@ -3,6 +3,11 @@ import { pagination, scanInput, mediaType, text } from '../util/validation.js';
 export function workflowController(workflow, mediaLibrary) {
   const accepted = (ctx, job) => { ctx.status = 202; ctx.body = { data: job }; };
   return {
+    added(ctx) {
+      const body = ctx.request.body ?? {};
+      if (typeof body.hash !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(body.hash)) throw new AppError('torrent hash 无效');
+      accepted(ctx, workflow.enqueue({ hash: body.hash.toLowerCase(), event: 'added' }));
+    },
     completed(ctx) {
       const body = ctx.request.body ?? {};
       if (typeof body.hash !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(body.hash)) throw new AppError('torrent hash 无效');

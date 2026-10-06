@@ -5,6 +5,18 @@ import { DeepseekService } from '../src/service/deepseek.js';
 import { QbittorrentService } from '../src/service/qbittorrent.js';
 
 const task = (state, end, status = 'Completed') => ({ Id: 'scan', Key: 'RefreshLibrary', State: state, LastExecutionResult: end ? { EndTimeUtc: end, Status: status } : null });
+
+test('added notification only changes its native preference fields and rename uses relative paths', async () => {
+  const prefs = { autorun_enabled: true, autorun_program: 'completed', autorun_on_torrent_added_enabled: false, autorun_on_torrent_added_program: '' };
+  const qbt = new QbittorrentService({}, async (path, options) => {
+    if (path === 'app/preferences') return prefs;
+    if (path === 'torrents/renameFile') { assert.equal(options.method, 'POST'); assert.deepEqual(options.form, { hash: 'hash', oldPath: 'dir/old.mkv', newPath: 'dir/new.mkv' }); return; }
+    assert.equal(path, 'app/setPreferences'); const update = JSON.parse(options.form.json);
+    assert.deepEqual(Object.keys(update).sort(), ['autorun_on_torrent_added_enabled', 'autorun_on_torrent_added_program']); Object.assign(prefs, update);
+  });
+  assert.deepEqual(await qbt.setAddedNotification({ enabled: true, program: 'curl added' }), { enabled: true, program: 'curl added' });
+  assert.equal(prefs.autorun_program, 'completed'); await qbt.renameFile('hash', 'dir/old.mkv', 'dir/new.mkv');
+});
 test('completion notification exposes only its settings and updates only native completion fields', async () => {
   const prefs = { autorun_enabled: false, autorun_program: '', mail_notification_password: 'private', autorun_on_torrent_added_enabled: true, save_path: '/media' };
   const qbt = new QbittorrentService({}, async (path, options) => {
