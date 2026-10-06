@@ -71,12 +71,13 @@ test('renamed media cannot apply a candidate from an old preview', async () => {
   assert.equal(result.status, 'failed'); assert.match(result.items[0].error, /路径已变化/);
   assert.deepEqual(events, ['scan']);
 });
-test('ambiguous candidates are preserved without auto apply and partial errors remain visible', async () => {
+test('ambiguous candidates use the first result while partial errors remain visible', async () => {
   const { workflow, deps, events } = fixture();
   deps.mediaLibrary.unidentified = async () => ({ items: [movie, { ...movie, Id: 'bad', Path: '/media/movies/bad.mkv' }], total: 2 });
   deps.deepseek.identify = async source => { if (source === 'bad') throw new Error('识别失败'); return { name: 'Dune', year: null }; };
   deps.jellyfin.search = async () => [candidate, { ...candidate, ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }];
-  const result = await done(workflow, workflow.enqueue({})); assert.equal(result.status, 'needs_review'); assert.equal(result.items[1].status, 'failed'); assert.equal(result.items[0].candidates.length, 2); assert.deepEqual(events, ['scan']);
+  const result = await done(workflow, workflow.enqueue({})); assert.equal(result.status, 'failed'); assert.equal(result.items[1].status, 'failed'); assert.equal(result.items[0].candidates.length, 2); assert.deepEqual(events, ['scan', 'apply']);
+  assert.equal(result.items[0].selectionMethod, 'fallback'); assert.equal(result.items[0].confirmed.ProviderIds.Tmdb, '438631');
 });
 test('AI resolves ambiguous candidates and successful application confirms the selected result', async () => {
   const { workflow, deps, events } = fixture(); let calls = 0;
@@ -190,7 +191,7 @@ test('Chinese preference in preview does not apply metadata or advance cursor', 
   workflow.confirm(result.id, 'm', result.items[0].candidates.find(c => c.Name === '沙丘').candidateId);
   assert.equal((await done(workflow, result)).items[0].confirmed.Name, '沙丘');
 });
-test('AI uncertainty, invalid IDs, year conflicts and upstream errors fall back to review', async () => {
+test('AI uncertainty, invalid IDs, year conflicts and upstream errors use the first eligible result', async () => {
   for (const response of ['uncertain', 'forged', 'year-conflict', 'error']) {
     const { workflow, deps, events } = fixture();
     deps.jellyfin.search = async () => [{ ...candidate, Name: '沙丘' }, { ...candidate, Name: '沙丘', ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }];
@@ -199,8 +200,49 @@ test('AI uncertainty, invalid IDs, year conflicts and upstream errors fall back 
       return { candidateId: response === 'forged' ? 'forged' : candidates[response === 'year-conflict' ? 1 : 0].candidateId, confidence: response === 'uncertain' ? 'low' : 'high', reason: response };
     };
     const result = await done(workflow, workflow.enqueue({}));
-    assert.equal(result.status, 'needs_review'); assert.deepEqual(events, ['scan']);
+    assert.equal(result.status, 'completed'); assert.deepEqual(events, ['scan', 'apply']);
+    assert.equal(result.items[0].selectionMethod, 'fallback'); assert.match(result.items[0].selectionWarning, /临时/);
+    assert.equal(result.items[0].confirmed.ProviderIds.Tmdb, '438631');
   }
+});
+
+test('fallback skips candidates with missing IDs or conflicting years', async () => {
+  const { workflow, deps } = fixture();
+  deps.jellyfin.search = async () => [
+    { Name: '无 ID', ProductionYear: 2021 },
+    { ...candidate, Name: '沙丘', ProductionYear: 1984, ProviderIds: { Tmdb: '841' } },
+    { ...candidate, Name: '沙丘' },
+    { ...candidate, Name: '另一候选', ProviderIds: { Tmdb: 'other' } }
+  ];
+  deps.deepseek.chooseCandidate = async () => ({ candidateId: null, confidence: 'low', reason: '无法确定' });
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'completed'); assert.equal(result.items[0].confirmed.ProviderIds.Tmdb, '438631');
+  assert.equal(result.items[0].selectionMethod, 'fallback');
+});
+
+test('no valid year-compatible candidates still require review', async () => {
+  for (const candidates of [[], [{ Name: '无 ID', ProductionYear: 2021 }], [{ ...candidate, ProductionYear: 1984 }]]) {
+    const { workflow, deps, events } = fixture(); let confirmed = 0;
+    deps.jellyfin.search = async () => candidates;
+    deps.deepseek.chooseCandidate = async () => ({ candidateId: null, confidence: 'low', reason: '无匹配年份' });
+    deps.mediaLibrary.markIdentified = () => { confirmed++; };
+    const result = await done(workflow, workflow.enqueue({}));
+    assert.equal(result.status, 'needs_review'); assert.equal(confirmed, 0); assert.deepEqual(events, ['scan']);
+  }
+});
+
+test('fallback preview remains read-only and manual choice can override the first candidate', async () => {
+  const { workflow, deps, events } = fixture(); let confirmed = 0;
+  deps.jellyfin.search = async () => [{ ...candidate, Name: '沙丘' }, { ...candidate, Name: '其他标题', ProviderIds: { Tmdb: 'other' } }];
+  deps.deepseek.chooseCandidate = async () => ({ candidateId: null, confidence: 'low', reason: '无法确定' });
+  deps.mediaLibrary.markIdentified = () => { confirmed++; };
+  const preview = await done(workflow, workflow.enqueue({ dryRun: true }));
+  assert.equal(preview.status, 'needs_review'); assert.equal(preview.items[0].selectionMethod, 'fallback');
+  assert.equal(confirmed, 0); assert.deepEqual(events, ['scan']);
+  workflow.confirm(preview.id, 'm', preview.items[0].candidates[1].candidateId);
+  const result = await done(workflow, preview);
+  assert.equal(result.items[0].confirmed.ProviderIds.Tmdb, 'other'); assert.equal(result.items[0].selectionMethod, 'manual');
+  assert.equal(result.items[0].selectionWarning, undefined);
 });
 test('AI recommendation in preview does not apply metadata or advance the cursor', async () => {
   const { workflow, deps, events } = fixture(); let confirmed = 0;

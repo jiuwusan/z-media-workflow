@@ -83,6 +83,7 @@ export class WorkflowService {
         if (previous?.selectedCandidate) {
           entry.identity = previous.identity; entry.candidates = previous.candidates;
           entry.selectionMethod = previous.selectionMethod; entry.aiDecision = previous.aiDecision;
+          if (previous.selectionWarning) entry.selectionWarning = previous.selectionWarning;
           await this.applyCandidate(job, entry, previous.selectedCandidate); continue;
         }
         this.update(job, `提取名称：${entry.source}`); entry.identity = await this.services.deepseek.identify(entry.source, item.Type);
@@ -101,7 +102,14 @@ export class WorkflowService {
             if (selected) entry.selectionMethod = 'ai';
           } catch (error) { entry.aiDecisionError = redact(error.message, this.secrets); }
         }
-        if (job.input.dryRun || !selected) { entry.status = 'needs_review'; entry.message = job.input.dryRun ? '预览完成，选择候选后确认应用' : '没有唯一可靠候选，请人工确认或修改搜索名称'; }
+        if (!selected) {
+          selected = entry.candidates.find(c => entry.identity.year == null || c.ProductionYear === entry.identity.year);
+          if (selected) {
+            entry.selectionMethod = 'fallback';
+            entry.selectionWarning = `未能确定唯一候选，已临时选择第一个有效且年份匹配的结果：${selected.Name}${selected.ProductionYear ? ` (${selected.ProductionYear})` : ''}`;
+          }
+        }
+        if (job.input.dryRun || !selected) { entry.status = 'needs_review'; entry.message = job.input.dryRun ? '预览完成，选择候选后确认应用' : '没有有效且年份匹配的候选，请人工确认或修改搜索名称'; }
         else await this.applyCandidate(job, entry, selected);
       } catch (error) { entry.status = 'failed'; entry.error = redact(error.message, this.secrets); }
     }
@@ -163,11 +171,11 @@ export class WorkflowService {
   confirm(id, itemId, candidateId) {
     const { job, entry } = this.reviewEntry(id, itemId), candidate = entry.candidates.find(c => c.candidateId === candidateId);
     if (!candidate) throw new AppError('候选不存在，请重新加载任务');
-    return this.queueAction(job, async () => { try { entry.selectionMethod = 'manual'; await this.applyCandidate(job, entry, candidate); } catch (error) { entry.status = 'failed'; entry.error = redact(error.message, this.secrets); } });
+    return this.queueAction(job, async () => { try { entry.selectionMethod = 'manual'; delete entry.selectionWarning; await this.applyCandidate(job, entry, candidate); } catch (error) { entry.status = 'failed'; entry.error = redact(error.message, this.secrets); } });
   }
   search(id, itemId, identity) {
     const { job, entry } = this.reviewEntry(id, itemId); const valid = validateIdentity(identity);
-    return this.queueAction(job, async () => { const item = await this.services.mediaLibrary.ensureItem(itemId, { libraryId: entry.libraryId ?? job.input.libraryId, type: entry.type }); entry.identity = valid; delete entry.aiDecision; delete entry.aiDecisionError; delete entry.selectionMethod; await this.findCandidates(job, entry, item); entry.status = 'needs_review'; });
+    return this.queueAction(job, async () => { const item = await this.services.mediaLibrary.ensureItem(itemId, { libraryId: entry.libraryId ?? job.input.libraryId, type: entry.type }); entry.identity = valid; delete entry.aiDecision; delete entry.aiDecisionError; delete entry.selectionMethod; delete entry.selectionWarning; await this.findCandidates(job, entry, item); entry.status = 'needs_review'; });
   }
   async close(timeoutMs = 30000) { this.stopping = true; const end = Date.now() + timeoutMs; while (this.running && Date.now() < end) await sleep(25); return !this.running; }
 }
