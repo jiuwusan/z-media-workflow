@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AppError } from '../util/error.js';
 import { sleep } from '../util/http.js';
-import { hasIdentity, mediaSource, selectCandidate, validateIdentity } from '../util/media.js';
+import { compareProviderIdentity, hasChineseName, hasIdentity, mediaSource, selectCandidate, validateIdentity } from '../util/media.js';
 import { log, redact } from '../util/logger.js';
 export class WorkflowService {
   constructor(config, services) {
@@ -88,7 +88,10 @@ export class WorkflowService {
         this.update(job, `提取名称：${entry.source}`); entry.identity = await this.services.deepseek.identify(entry.source, item.Type);
         await this.findCandidates(job, entry, item);
         let selected = selectCandidate(entry.identity, entry.candidates);
-        if (selected) entry.selectionMethod = 'rules';
+        if (selected) {
+          entry.selectionMethod = 'rules';
+          selected = await this.preferChineseCandidate(job, entry, selected);
+        }
         else if (entry.candidates.length) {
           this.update(job, `AI 判断候选：${entry.identity.name}`);
           try {
@@ -109,6 +112,21 @@ export class WorkflowService {
     this.update(job, `搜索候选：${entry.identity.name}`);
     const candidates = await this.services.jellyfin.search(item, entry.identity);
     entry.candidates = candidates.filter(hasIdentity).slice(0, 50).map(c => ({ ...c, candidateId: randomUUID() }));
+  }
+  async preferChineseCandidate(job, entry, selected) {
+    if (hasChineseName(selected) || selected.ProductionYear == null) return selected;
+    const chinese = entry.candidates.filter(c => hasChineseName(c) && c.ProductionYear === selected.ProductionYear && compareProviderIdentity(selected, c) !== 'conflict');
+    if (!chinese.length) return selected;
+    const same = chinese.filter(c => compareProviderIdentity(selected, c) === 'same');
+    if (same.length && same.every(a => same.every(b => compareProviderIdentity(a, b) !== 'conflict'))) return same[0];
+    this.update(job, `AI 判断中文候选：${entry.identity.name}`);
+    try {
+      const decision = await this.services.deepseek.chooseCandidate(entry.source, entry.type, entry.identity, [selected, ...chinese]);
+      entry.aiDecision = { ...decision, reason: redact(decision.reason, this.secrets) };
+      const preferred = decision.confidence === 'high' ? chinese.find(c => c.candidateId === decision.candidateId) : null;
+      if (preferred) { entry.selectionMethod = 'ai'; return preferred; }
+    } catch (error) { entry.aiDecisionError = redact(error.message, this.secrets); }
+    return selected;
   }
   async applyCandidate(job, entry, candidate) {
     entry.selectedCandidate = structuredClone(candidate);

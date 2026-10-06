@@ -97,6 +97,99 @@ test('unique rule matches do not require a second AI request', async () => {
   const result = await done(workflow, workflow.enqueue({}));
   assert.equal(result.status, 'completed'); assert.equal(result.items[0].selectionMethod, 'rules');
 });
+
+test('English rule match prefers Chinese candidate with shared provider ID in either order', async () => {
+  for (const reverse of [false, true]) {
+    const { workflow, deps } = fixture();
+    const chinese = { ...candidate, Name: '沙丘', ProviderIds: { Tmdb: '438631', Imdb: 'tt1160419' } };
+    const candidates = [candidate, chinese];
+    deps.jellyfin.search = async () => reverse ? candidates.toReversed() : candidates;
+    deps.deepseek.chooseCandidate = async () => { throw new Error('shared ID should not require AI'); };
+    const result = await done(workflow, workflow.enqueue({}));
+    assert.equal(result.status, 'completed'); assert.equal(result.items[0].confirmed.Name, '沙丘');
+    assert.equal(result.items[0].selectionMethod, 'rules');
+  }
+});
+
+test('The Fixers English rule match can use AI to prefer its Chinese alias', async () => {
+  const { workflow, deps } = fixture(); let calls = 0;
+  const series = { ...movie, Type: 'Series', Path: '/media/series/The.Fixers.S01.2026.2160p.NF.WEB-DL' };
+  deps.mediaLibrary.unidentified = async () => ({ items: [series], total: 1 });
+  deps.mediaLibrary.ensureItem = async () => series;
+  deps.deepseek.identify = async () => ({ name: 'The Fixers', year: 2026 });
+  deps.jellyfin.search = async () => [
+    { Name: 'The Fixers', ProductionYear: 2026, ProviderIds: { Imdb: 'tt39495239' } },
+    { Name: '黑白清道夫', ProductionYear: 2026, ProviderIds: { Tmdb: 'example' } },
+    { Name: '黑白清道夫', ProductionYear: 2025, ProviderIds: { Tmdb: 'old' } }
+  ];
+  deps.deepseek.chooseCandidate = async (source, type, identity, candidates) => {
+    calls++; assert.equal(type, 'Series'); assert.equal(identity.year, 2026);
+    assert.equal(candidates.length, 2); assert.ok(candidates.every(c => c.ProductionYear === 2026));
+    return { candidateId: candidates.find(c => c.Name === '黑白清道夫').candidateId, confidence: 'high', reason: '中文译名对应原名和年份' };
+  };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(calls, 1); assert.equal(result.status, 'completed');
+  assert.equal(result.items[0].confirmed.Name, '黑白清道夫'); assert.equal(result.items[0].selectionMethod, 'ai');
+});
+
+test('Chinese preference preserves English rule result on AI uncertainty or invalid choice', async () => {
+  for (const mode of ['low', 'error', 'forged', 'wrong-year']) {
+    const { workflow, deps } = fixture(); let calls = 0;
+    deps.jellyfin.search = async () => [candidate, { Name: '沙丘', ProductionYear: 2021, ProviderIds: { Imdb: 'tt1160419' } }, { Name: '沙丘', ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }];
+    deps.deepseek.chooseCandidate = async (source, type, identity, candidates) => {
+      calls++; if (mode === 'error') throw new Error('AI unavailable');
+      return { candidateId: mode === 'wrong-year' ? candidates.find(c => c.ProductionYear === 1984)?.candidateId : mode === 'forged' ? 'forged' : candidates.find(c => c.Name === '沙丘').candidateId, confidence: mode === 'low' ? 'low' : 'high', reason: mode };
+    };
+    const result = await done(workflow, workflow.enqueue({}));
+    assert.equal(calls, 1); assert.equal(result.status, 'completed');
+    assert.equal(result.items[0].confirmed.Name, 'Dune'); assert.equal(result.items[0].selectionMethod, 'rules');
+  }
+});
+
+test('Chinese preference excludes conflicting provider IDs and different years', async () => {
+  const { workflow, deps } = fixture();
+  deps.jellyfin.search = async () => [candidate,
+    { Name: '沙丘', ProductionYear: 2021, ProviderIds: { Tmdb: 'different' } },
+    { Name: '沙丘', ProductionYear: 1984, ProviderIds: { Tmdb: '438631' } }
+  ];
+  deps.deepseek.chooseCandidate = async () => { throw new Error('incompatible candidates must not reach AI'); };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'completed'); assert.equal(result.items[0].confirmed.Name, 'Dune');
+  assert.equal(result.items[0].aiDecisionError, undefined);
+});
+
+test('shared IMDb does not override conflicting TMDB IDs', async () => {
+  const { workflow, deps } = fixture();
+  deps.jellyfin.search = async () => [
+    { ...candidate, ProviderIds: { Tmdb: '438631', Imdb: 'tt1160419' } },
+    { Name: '其他电影', ProductionYear: 2021, ProviderIds: { tmdb: 'other', imdb: 'tt1160419' } }
+  ];
+  deps.deepseek.chooseCandidate = async () => { throw new Error('known ID conflict must not reach AI'); };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.items[0].confirmed.Name, 'Dune'); assert.equal(result.items[0].aiDecisionError, undefined);
+});
+
+test('already matched Chinese title needs no extra AI request', async () => {
+  const { workflow, deps } = fixture();
+  deps.deepseek.identify = async () => ({ name: '沙丘', year: 2021 });
+  deps.jellyfin.search = async () => [candidate, { ...candidate, Name: '沙丘' }];
+  deps.deepseek.chooseCandidate = async () => { throw new Error('Chinese match should not require AI'); };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'completed'); assert.equal(result.items[0].confirmed.Name, '沙丘');
+  assert.equal(result.items[0].aiDecisionError, undefined);
+});
+
+test('Chinese preference in preview does not apply metadata or advance cursor', async () => {
+  const { workflow, deps, events } = fixture(); let confirmed = 0;
+  deps.jellyfin.search = async () => [candidate, { ...candidate, Name: '沙丘' }];
+  deps.mediaLibrary.markIdentified = () => { confirmed++; };
+  const result = await done(workflow, workflow.enqueue({ dryRun: true }));
+  assert.equal(result.status, 'needs_review'); assert.equal(confirmed, 0); assert.deepEqual(events, ['scan']);
+  assert.equal(result.items[0].selectionMethod, 'rules');
+  assert.equal(result.items[0].aiDecisionError, undefined);
+  workflow.confirm(result.id, 'm', result.items[0].candidates.find(c => c.Name === '沙丘').candidateId);
+  assert.equal((await done(workflow, result)).items[0].confirmed.Name, '沙丘');
+});
 test('AI uncertainty, invalid IDs, year conflicts and upstream errors fall back to review', async () => {
   for (const response of ['uncertain', 'forged', 'year-conflict', 'error']) {
     const { workflow, deps, events } = fixture();

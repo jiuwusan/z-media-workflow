@@ -16,6 +16,13 @@ export function mapPath(value, { from, to } = {}) {
 export const normalizeName = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '');
 export function providerEntries(item) { return Object.entries(item.ProviderIds ?? {}).filter(([k, v]) => /^(tmdb|tvdb|imdb)$/i.test(k) && v).map(([k, v]) => [k.toLowerCase(), String(v)]); }
 export function hasIdentity(item) { return providerEntries(item).length > 0; }
+export const hasChineseName = item => /\p{Script=Han}/u.test(item.Name ?? '');
+export function compareProviderIdentity(a, b) {
+  const ids = new Map(providerEntries(a));
+  const shared = providerEntries(b).filter(([key]) => ids.has(key));
+  if (shared.some(([key, value]) => ids.get(key) !== value)) return 'conflict';
+  return shared.length ? 'same' : 'unknown';
+}
 export function selectCandidate(identity, candidates) {
   const matches = candidates.filter(c => hasIdentity(c) && [c.Name, c.OriginalTitle].filter(Boolean).some(n => normalizeName(n) === normalizeName(identity.name)) && (identity.year == null || c.ProductionYear === identity.year));
   const unique = new Map(matches.map(c => [JSON.stringify(providerEntries(c).sort()), c]));
