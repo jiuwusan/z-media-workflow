@@ -50,8 +50,9 @@ export class TorrentNamingService {
         if (!decisions.has(key)) decisions.set(key, await this.ai.identifySeason({ torrent: torrent.name, path: file.name, title: parsed.title }));
         const decision = decisions.get(key);
         entry.seasonDecision = { ...decision, reason: redact(decision.reason, this.secrets) };
-        if (decision.confidence !== 'high' || decision.season == null) { entry.status = 'skipped'; entry.message = 'AI 无法可靠确定季号，保留原文件名'; continue; }
-        entry.newPath = renamedEpisodePath(parsed, decision);
+        const useDefault = decision.confidence !== 'high' || decision.season == null;
+        if (useDefault) entry.message = 'AI 无法可靠确定季号，默认使用 S01';
+        entry.newPath = renamedEpisodePath(parsed, useDefault ? { season: 1, removeTitleSuffix: null } : decision);
         if (!seriesCategory(await this.qbt.torrent(hash))) { entry.status = 'skipped'; entry.message = '种子分类已不包含 series，已停止重命名'; continue; }
         const current = await this.qbt.files(hash), actual = current.find(f => f.index === file.index);
         if (actual?.name === entry.newPath) { entry.status = 'completed'; continue; }

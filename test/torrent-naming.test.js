@@ -48,12 +48,30 @@ test('empty magnet file list waits for metadata rather than claiming completion'
   await f.service.run(f.job, () => {}); assert.equal(f.calls(), 1);
   f.qbt.files = async () => []; await assert.rejects(f.service.run(f.job, () => {}), /文件列表.*超时/);
 });
-test('uncertain AI and target collisions never rename files', async () => {
-  const f = fixture(); f.ai.identifySeason = async () => ({ season: null, confidence: 'low', reason: '无法确定' });
-  await f.service.run(f.job, () => {}); assert.equal(f.calls(), 0); assert.equal(f.job.items[0].status, 'skipped');
-  f.ai.identifySeason = async () => decision;
-  f.setFiles([{ index: 0, name: source }, { index: 1, name: target }]); f.job.items = [];
-  await f.service.run(f.job, () => {}); assert.equal(f.calls(), 0); assert.equal(f.job.items[0].status, 'failed');
+test('uncertain AI defaults to S01 without removing any title suffix', async () => {
+  for (const season of [null, 2]) {
+    const f = fixture();
+    const uncertain = { season, removeTitleSuffix: 'II', confidence: 'low', reason: '无法确定' };
+    f.ai.identifySeason = async () => uncertain;
+    await f.service.run(f.job, () => {});
+    assert.equal(f.calls(), 1);
+    assert.equal(f.job.items[0].status, 'completed');
+    assert.equal(f.job.items[0].newPath, 'Journey.to.the.West.II.S01E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv');
+    assert.deepEqual(f.job.items[0].seasonDecision, uncertain);
+    assert.match(f.job.items[0].message, /默认.*S01/);
+    f.job.items = []; await f.service.run(f.job, () => {}); assert.equal(f.calls(), 1);
+  }
+});
+test('target collisions prevent renaming even with the default season', async () => {
+  for (const uncertain of [false, true]) {
+    const f = fixture();
+    const newName = uncertain ? 'Journey.to.the.West.II.S01E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv' : target;
+    if (uncertain) f.ai.identifySeason = async () => ({ season: null, removeTitleSuffix: null, confidence: 'low', reason: '无法确定' });
+    f.setFiles([{ index: 0, name: source }, { index: 1, name: newName }]);
+    await f.service.run(f.job, () => {});
+    assert.equal(f.calls(), 0); assert.equal(f.job.items[0].status, 'failed');
+    assert.match(f.job.items[0].error, /目标文件名已存在/);
+  }
 });
 test('lost rename response is confirmed from current file list, without a second write', async () => {
   const f = fixture(); const rename = f.qbt.renameFile;
