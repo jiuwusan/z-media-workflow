@@ -23,6 +23,12 @@ export function compareProviderIdentity(a, b) {
   if (shared.some(([key, value]) => ids.get(key) !== value)) return 'conflict';
   return shared.length ? 'same' : 'unknown';
 }
+export function isLaterSeasonCandidate(identity, candidate, type, decision) {
+  return type === 'Series' && Number.isInteger(identity.year) && Number.isInteger(candidate.ProductionYear)
+    && candidate.ProductionYear < identity.year && decision?.confidence === 'high'
+    && decision.yearRelation === 'later_season' && Number.isInteger(decision.season)
+    && decision.season > 1 && decision.season <= 99;
+}
 export function selectCandidate(identity, candidates) {
   const matches = candidates.filter(c => hasIdentity(c) && [c.Name, c.OriginalTitle].filter(Boolean).some(n => normalizeName(n) === normalizeName(identity.name)) && (identity.year == null || c.ProductionYear === identity.year));
   const unique = new Map(matches.map(c => [JSON.stringify(providerEntries(c).sort()), c]));

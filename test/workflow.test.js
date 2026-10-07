@@ -410,3 +410,58 @@ test('bounded queue rejects additional work while preserving accepted tasks', as
   assert.throws(() => workflow.enqueue({}), /队列已满/);
   release(); assert.equal((await done(workflow, first)).status, 'completed'); assert.equal((await done(workflow, second)).status, 'completed');
 });
+
+function laterSeasonFixture() {
+  const f = fixture();
+  const series = { Id: 's', Type: 'Series', Path: '/media/series/Example.S02.2024', Name: 'Example', LibraryId: 'lib' };
+  f.deps.mediaLibrary.unidentified = async () => ({ items: [series], total: 1 });
+  f.deps.mediaLibrary.ensureItem = async () => series;
+  f.deps.deepseek.identify = async () => ({ name: 'Example', year: 2024 });
+  return f;
+}
+test('later-season workflow searches without year then applies AI-confirmed series identity', async () => {
+  const { workflow, deps, events } = laterSeasonFixture(); const years = [];
+  deps.jellyfin.search = async (item, identity) => { years.push(identity.year); return identity.year === null ? [{ Name: '示例剧', ProductionYear: 2020, ProviderIds: { Tvdb: '123' } }] : []; };
+  deps.deepseek.chooseCandidate = async (source, type, identity, candidates) => ({ candidateId: candidates[0].candidateId, confidence: 'high', reason: '第二季年份与节目首播年不同', season: 2, yearRelation: 'later_season' });
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.deepEqual(years, [2024, null]); assert.equal(result.status, 'completed');
+  assert.equal(result.items[0].confirmed.ProductionYear, 2020); assert.equal(result.items[0].identity.year, 2024);
+  assert.equal(result.items[0].selectionMethod, 'ai'); assert.deepEqual(events, ['scan', 'apply']);
+});
+test('year-mismatched series cannot use first-result fallback or an unsubstantiated AI choice', async () => {
+  for (const decision of [{ confidence: 'low', season: null, yearRelation: null }, { confidence: 'high', season: 1, yearRelation: 'later_season' }, { confidence: 'high' }]) {
+    const { workflow, deps, events } = laterSeasonFixture();
+    deps.jellyfin.search = async () => [{ Name: '示例剧', ProductionYear: 2020, ProviderIds: { Tvdb: '123' } }];
+    deps.deepseek.chooseCandidate = async (source, type, identity, candidates) => ({ candidateId: candidates[0].candidateId, reason: '不确定', ...decision });
+    const result = await done(workflow, workflow.enqueue({}));
+    assert.equal(result.status, 'needs_review'); assert.deepEqual(events, ['scan']);
+  }
+});
+
+test('later-season preview retains AI choice without applying or advancing the cursor', async () => {
+  const { workflow, deps, events } = laterSeasonFixture(); let confirmed = 0;
+  deps.mediaLibrary.markIdentified = () => confirmed++;
+  deps.jellyfin.search = async () => [{ Name: '示例剧', ProductionYear: 2020, ProviderIds: { Tvdb: '123' } }];
+  deps.deepseek.chooseCandidate = async (source, type, identity, candidates) => ({ candidateId: candidates[0].candidateId, confidence: 'high', reason: '第二季2024年播出', season: 2, yearRelation: 'later_season' });
+  const result = await done(workflow, workflow.enqueue({ dryRun: true }));
+  assert.equal(result.status, 'needs_review'); assert.equal(result.items[0].selectionMethod, 'ai');
+  assert.match(result.items[0].selectionWarning, /资源年份 2024.*首播年份 2020/);
+  assert.equal(confirmed, 0); assert.deepEqual(events, ['scan']);
+});
+test('matching series year preserves rule priority without another search', async () => {
+  const { workflow, deps } = laterSeasonFixture(); let searches = 0;
+  deps.jellyfin.search = async () => { searches++; return [{ Name: 'Example', ProductionYear: 2024, ProviderIds: { Tvdb: '456' } }]; };
+  deps.deepseek.chooseCandidate = async () => { throw new Error('must not call'); };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(searches, 1); assert.equal(result.status, 'completed'); assert.equal(result.items[0].selectionMethod, 'rules');
+});
+
+test('supplemental program candidates survive the 50-result limit', async () => {
+  const { workflow, deps } = laterSeasonFixture();
+  deps.jellyfin.search = async (item, identity) => identity.year === null
+    ? [{ Name: 'Example', ProductionYear: 2020, ProviderIds: { Tvdb: 'correct' } }]
+    : Array.from({ length: 50 }, (_, index) => ({ Name: 'Unrelated' + index, ProductionYear: 2010, ProviderIds: { Tvdb: 'wrong' + index } }));
+  deps.deepseek.chooseCandidate = async (source, type, identity, candidates) => ({ candidateId: candidates.find(c => c.ProviderIds.Tvdb === 'correct')?.candidateId ?? null, confidence: 'high', season: 2, yearRelation: 'later_season', reason: '第二季' });
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'completed'); assert.equal(result.items[0].confirmed.ProviderIds.Tvdb, 'correct');
+});

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AppError } from '../util/error.js';
 import { sleep } from '../util/http.js';
-import { compareProviderIdentity, hasChineseName, hasIdentity, mediaSource, selectCandidate, validateIdentity } from '../util/media.js';
+import { compareProviderIdentity, hasChineseName, hasIdentity, isLaterSeasonCandidate, mediaSource, selectCandidate, validateIdentity } from '../util/media.js';
 import { log, redact } from '../util/logger.js';
 export class WorkflowService {
   constructor(config, services) {
@@ -106,8 +106,11 @@ export class WorkflowService {
           try {
             const decision = await this.services.deepseek.chooseCandidate(entry.source, entry.type, entry.identity, entry.candidates);
             entry.aiDecision = { ...decision, reason: redact(decision.reason, this.secrets) };
-            selected = decision.confidence === 'high' ? entry.candidates.find(c => c.candidateId === decision.candidateId && (entry.identity.year == null || c.ProductionYear === entry.identity.year)) : null;
-            if (selected) entry.selectionMethod = 'ai';
+            selected = decision.confidence === 'high' ? entry.candidates.find(c => c.candidateId === decision.candidateId && (entry.identity.year == null || c.ProductionYear === entry.identity.year || isLaterSeasonCandidate(entry.identity, c, entry.type, decision))) : null;
+            if (selected) {
+              entry.selectionMethod = 'ai';
+              if (isLaterSeasonCandidate(entry.identity, selected, entry.type, decision)) entry.selectionWarning = `AI 已核实为第 ${decision.season} 季：资源年份 ${entry.identity.year}，节目首播年份 ${selected.ProductionYear}。${entry.aiDecision.reason}`;
+            }
           } catch (error) { entry.aiDecisionError = redact(error.message, this.secrets); }
         }
         if (!selected) {
@@ -117,7 +120,7 @@ export class WorkflowService {
             entry.selectionWarning = `未能确定唯一候选，已临时选择第一个有效且年份匹配的结果：${selected.Name}${selected.ProductionYear ? ` (${selected.ProductionYear})` : ''}`;
           }
         }
-        if (job.input.dryRun || !selected) { entry.status = 'needs_review'; entry.message = job.input.dryRun ? '预览完成，选择候选后确认应用' : '没有有效且年份匹配的候选，请人工确认或修改搜索名称'; }
+        if (job.input.dryRun || !selected) { entry.status = 'needs_review'; entry.message = job.input.dryRun ? '预览完成，选择候选后确认应用' : entry.type === 'Series' ? '没有年份匹配或经 AI 核实后续季关系的候选，请人工确认或修改搜索名称' : '没有有效且年份匹配的候选，请人工确认或修改搜索名称'; }
         else await this.applyCandidate(job, entry, selected);
       } catch (error) { entry.status = 'failed'; entry.error = redact(error.message, this.secrets); }
     }
@@ -125,9 +128,20 @@ export class WorkflowService {
     this.recoveries.delete(job.id);
   }
   async findCandidates(job, entry, item) {
+    delete entry.candidateSearchWarning;
     this.update(job, `搜索候选：${entry.identity.name}`);
-    const candidates = await this.services.jellyfin.search(item, entry.identity);
-    entry.candidates = candidates.filter(hasIdentity).slice(0, 50).map(c => ({ ...c, candidateId: randomUUID() }));
+    let candidates = await this.services.jellyfin.search(item, entry.identity);
+    if (entry.type === 'Series' && entry.identity.year != null && !candidates.some(c => hasIdentity(c) && c.ProductionYear === entry.identity.year)) {
+      this.update(job, `补查节目候选：${entry.identity.name}`);
+      try { candidates = [...await this.services.jellyfin.search(item, { ...entry.identity, year: null }), ...candidates]; }
+      catch (error) { if (!candidates.length) throw error; entry.candidateSearchWarning = redact(error.message, this.secrets); }
+    }
+    // Keep distinct names/providers, but collapse identical results from the two searches.
+    const seen = new Set();
+    entry.candidates = candidates.filter(hasIdentity).filter(c => {
+      const key = JSON.stringify([c.Name, c.ProductionYear, Object.entries(c.ProviderIds ?? {}).sort()]);
+      if (seen.has(key)) return false; seen.add(key); return true;
+    }).slice(0, 50).map(c => ({ ...c, candidateId: randomUUID() }));
   }
   async preferChineseCandidate(job, entry, selected) {
     if (hasChineseName(selected) || selected.ProductionYear == null) return selected;

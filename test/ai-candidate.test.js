@@ -40,3 +40,18 @@ test('malformed and incomplete AI decisions cannot be applied', async () => {
   const ai = new DeepseekService({}, async () => ({ choices: [{ finish_reason: 'length', message: { content: '{}' } }] }));
   await assert.rejects(ai.chooseCandidate('Dune', 'Movie', identity, candidates), /未完成/);
 });
+
+const seriesIdentity = { name: 'Example', year: 2024 };
+const seriesCandidate = { candidateId: 'series', Name: '示例剧', ProductionYear: 2020, ProviderIds: { Tvdb: '123' } };
+const laterSeason = { candidateId: 'series', confidence: 'high', reason: '2024年第二季对应2020年首播节目', season: 2, yearRelation: 'later_season' };
+test('AI can confirm a later season against an earlier series premiere year', async () => {
+  const ai = service(laterSeason, data => assert.equal(data.candidates[0].ProductionYear, 2020));
+  assert.deepEqual(await ai.chooseCandidate('Example.S02.2024', 'Series', seriesIdentity, [seriesCandidate]), laterSeason);
+});
+test('series year exceptions require a confirmed later season and never allow future premieres', async () => {
+  for (const value of [{ ...laterSeason, season: 1 }, { ...laterSeason, season: null }, { ...laterSeason, yearRelation: 'unknown' }, { candidateId: 'series', confidence: 'high', reason: 'same name' }]) {
+    await assert.rejects(service(value).chooseCandidate('Example.2024', 'Series', seriesIdentity, [seriesCandidate]), /候选/);
+  }
+  const ai = new DeepseekService({}, async () => { throw new Error('must not request'); });
+  assert.equal((await ai.chooseCandidate('Example.S02.2024', 'Series', seriesIdentity, [{ ...seriesCandidate, ProductionYear: 2025 }])).candidateId, null);
+});
