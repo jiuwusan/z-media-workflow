@@ -118,3 +118,14 @@ test('category change before rename prevents writes', async () => {
   await f.service.run(f.job, () => {});
   assert.equal(f.calls(), 0); assert.equal(f.job.items[0].status, 'skipped');
 });
+
+test('known numbered subtitle uses the inferred season while preserving the subtitle', async () => {
+  const f = fixture();
+  const name = 'Initial.D.Fifth.Stage.EP13.2012.1080p.BluRay.DTS.x265-10bit-HDS.mkv';
+  f.setFiles([{ index: 0, name: 'folder/' + name }]);
+  f.ai.identifySeason = async () => ({ season: 5, removeTitleSuffix: null, confidence: 'high', reason: 'Fifth Stage 对应第五季' });
+  await f.service.run(f.job, () => {});
+  assert.equal(f.calls(), 1);
+  assert.equal(f.job.items[0].newPath, 'folder/Initial.D.Fifth.Stage.S05E13.2012.1080p.BluRay.DTS.x265-10bit-HDS.mkv');
+  assert.equal(f.job.items[0].status, 'completed');
+});
