@@ -24,7 +24,7 @@ export class WorkflowService {
     return { counts, queued: this.queue.length, running: this.running };
   }
   ensureCapacity() { if (this.stopping) throw new AppError('服务正在关闭', 503); if (this.queue.length >= this.config.maxQueue) throw new AppError('任务队列已满，请稍后重试', 429); }
-  enqueue(input = {}, recovery = []) {
+  enqueue(input = {}, recovery = [], options = {}) {
     this.prune();
     if (input.checkExisting) {
       const existing = [...this.jobs.values()].find(j => j.input.checkExisting && ['queued', 'running'].includes(j.status));
@@ -39,7 +39,7 @@ export class WorkflowService {
     const job = { id: randomUUID(), input: structuredClone(input), status: 'queued', stage: '排队', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), items: [] };
     this.jobs.set(job.id, job);
     if (recovery.length) this.recoveries.set(job.id, structuredClone(recovery));
-    this.queue.push({ job, action: () => this.run(job) }); this.drain(); return this.get(job.id);
+    this.queue.push({ job, action: () => this.run(job, options) }); this.drain(); return this.get(job.id);
   }
   update(job, stage, status) { job.stage = stage; if (status) job.status = status; job.updatedAt = new Date().toISOString(); }
   async drain() {
@@ -57,7 +57,7 @@ export class WorkflowService {
     const status = job.items.some(i => i.status === 'needs_review') ? 'needs_review' : job.items.some(i => i.status === 'failed') ? 'failed' : 'completed';
     this.update(job, status === 'needs_review' ? '等待人工确认' : status === 'failed' ? '存在失败条目' : '完成', status);
   }
-  async run(job) {
+  async run(job, { scanLibrary = Boolean(job.input.hash) } = {}) {
     if (job.input.event === 'added') {
       await this.services.torrentNaming.run(job, (job, stage) => this.update(job, stage));
       this.recoveries.delete(job.id); return;
@@ -68,7 +68,10 @@ export class WorkflowService {
       this.update(job, '检查下载'); const torrent = await qbittorrent.torrent(job.input.hash);
       if (torrent.progress < 1 || (torrent.amount_left ?? 0) > 0) throw new AppError('torrent 尚未下载完成', 409);
     }
-    this.update(job, '扫描媒体库'); await jellyfin.refreshAndWait();
+    if (scanLibrary) {
+      this.update(job, '扫描媒体库'); await jellyfin.refreshAndWait();
+    }
+    this.update(job, '读取待识别媒体');
     // Download callbacks scan media beyond the workflow cursor, independently of torrent paths.
     // Explicit pagination also preserves the complete scope of manual scans.
     const items = [];
@@ -178,7 +181,7 @@ export class WorkflowService {
     const job = this.get(id), failed = job.items.filter(i => i.status === 'failed');
     for (const previous of this.recoveries.get(id) ?? []) if (!failed.some(i => i.itemId === previous.itemId && i.path === previous.path)) failed.push(previous);
     if (!['failed', 'needs_review'].includes(job.status) || (job.status !== 'failed' && !failed.length)) throw new AppError('仅失败任务或失败条目可以重试', 409);
-    return this.enqueue(job.input, failed);
+    return this.enqueue(job.input, failed, { scanLibrary: false });
   }
   queueAction(job, action) {
     this.ensureCapacity(); this.update(job, '排队', 'queued'); this.queue.push({ job, action }); this.drain(); return this.get(job.id);
