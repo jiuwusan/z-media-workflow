@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WorkflowService } from '../src/service/workflow.js';
 import { MediaLibraryService } from '../src/service/media-library.js';
+import { DeepseekService } from '../src/service/deepseek.js';
 const movie = { Id: 'm', Type: 'Movie', Path: '/media/movies/Dune.2021.mkv', Name: 'Dune.2021', ProviderIds: {} };
 const candidate = { Name: 'Dune', ProductionYear: 2021, ProviderIds: { Tmdb: '438631' } };
 const config = { pollMs: 1, maxJobs: 10, maxQueue: 5, jobTtlMs: 60000, ingestRetries: 0, pathMapping: {}, seriesLibraryId: 's', movieLibraryId: 'l' };
@@ -15,6 +16,28 @@ async function done(workflow, job) {
   for (let i = 0; i < 100; i++) { const result = workflow.get(job.id); if (!['queued', 'running'].includes(result.status)) return result; await new Promise(r => setTimeout(r, 2)); }
   throw new Error('job did not finish');
 }
+
+test('Initial D season suffix is cleaned before Jellyfin search and rule matching', async () => {
+  const { workflow, deps } = fixture();
+  const source = '头文字D 第一季.Initial.D.1998.S01.540p.HAMI.WEB-DL.H264.AAC-HHWEB';
+  const series = { Id: 'initial-d', Type: 'Series', Path: `/MediasVol3/super-series/${source}`, Name: '头文字D 第一季', ProviderIds: {} };
+  const match = { Name: '头文字D', ProductionYear: 1998, ProviderIds: { Tvdb: 'initial-d' } };
+  deps.mediaLibrary.unidentified = async () => ({ items: [series], total: 1 });
+  deps.mediaLibrary.ensureItem = async () => series;
+  deps.deepseek = new DeepseekService({}, async () => ({ choices: [{ finish_reason: 'stop', message: { content: '{"name":"头文字D 第一季","year":1998}' } }] }));
+  let searches = 0;
+  deps.jellyfin.search = async (item, identity) => {
+    searches++;
+    assert.equal(item.Path, series.Path);
+    assert.deepEqual(identity, { name: '头文字D', year: 1998 });
+    return [match];
+  };
+  deps.jellyfin.verify = async () => ({ ...series, ...match });
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'completed'); assert.equal(searches, 1);
+  assert.equal(result.items[0].source, source); assert.equal(result.items[0].selectionMethod, 'rules');
+  assert.equal(result.items[0].confirmed.Name, '头文字D');
+});
 test('serial workflow deduplicates hash and confirms applied metadata', async () => {
   const { workflow, events } = fixture(); const a = workflow.enqueue({ hash: 'a'.repeat(40) });
   assert.equal(workflow.enqueue({ hash: 'a'.repeat(40) }).id, a.id);

@@ -15,6 +15,8 @@ source: Kung.Fu.Soccer.2026.2160p.YK.WEB-DL.H.265.HQ.DTS5.1-HHWEB.mkv
 输出：{"name":"Kung Fu Soccer","year":2026}。不能返回“少林足球”或 2001，因为它们不在原文中。
 source: 新白娘子传奇.New.Legend.of.Madame.White.Snake.1992.S01.1080p.WEB-DL
 输出：{"name":"新白娘子传奇","year":1992}。
+source: 头文字D 第一季.Initial.D.1998.S01.540p.HAMI.WEB-DL.H264.AAC-HHWEB
+输出：{"name":"头文字D","year":1998}。“第一季”是季号，不属于节目名称；其他第几季、Season 1、S01 等显式季号同样去除。不要删除 Fifth Stage 等作品副标题或标题本身的数字。
 source: Dune.1080p.WEB-DL.mkv
 输出：{"name":"Dune","year":null}。不能根据记忆补充 2021 或 1984。
 7. 仅输出一个合法 JSON 对象，只包含 name 和 year 两个字段：{"name":"媒体名称","year":2023}。year 必须是四位整数或 null，name 必须是字符串或 null。不输出 Markdown、解释、候选列表或其他字段。`;
@@ -41,9 +43,17 @@ season 为 1 到 99 的整数或 null。removeTitleSuffix 仅在标题尾部有�
   }
   async identify(source, type) {
     const userPrompt = `这是某个${type === 'Series' ? '电视剧节目的文件夹' : '电影的文件'}名称。请仅从 source 原文清洗提取媒体名称和明确写出的年份，不翻译、不补推、不用影视知识替换，按规定仅返回 JSON。待分析数据：\n${JSON.stringify({ type, source })}`;
-    return validateIdentity(await this.requestJson([
+    const identity = validateIdentity(await this.requestJson([
       { role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }
     ]));
+    // Model output may retain season metadata despite the prompt. Clean only
+    // explicit trailing markers; keep subtitles, sequel numbers and source intact.
+    if (type === 'Series') {
+      const suffix = /(?:[\s._-]*[（(\[]?\s*第[一二三四五六七八九十百零〇两\d]+[季集]|(?:^|[\s._-]+|\s*[（(\[]\s*)(?:Season\s*\d{1,2}|S\d{1,2}(?:E\d{1,3})?))\s*[）)\]]?\s*$/i;
+      let previous;
+      do { previous = identity.name; identity.name = identity.name.replace(suffix, '').trim(); } while (identity.name !== previous);
+    }
+    return validateIdentity(identity);
   }
   async chooseCandidate(source, type, identity, candidates) {
     const exact = candidates.filter(c => hasIdentity(c) && (identity.year == null || c.ProductionYear === identity.year));

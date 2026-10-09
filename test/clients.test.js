@@ -71,6 +71,26 @@ test('DeepSeek validates JSON including truncated outputs', async () => {
   const truncated = new DeepseekService({}, async () => ({ choices: [{ finish_reason: 'length', message: { content: '{}' } }] }));
   await assert.rejects(truncated.identify('x', 'Movie'));
 });
+
+test('DeepSeek removes explicit season suffixes from Series identities before searching', async () => {
+  const source = '头文字D 第一季.Initial.D.1998.S01.540p.HAMI.WEB-DL.H264.AAC-HHWEB';
+  for (const name of ['头文字D 第一季', '头文字D第一季', '头文字D 第1季', '头文字D.S01', 'Initial D Season 1', 'Initial D S01E01', '头文字D（第一季）']) {
+    const ds = new DeepseekService({}, async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ name, year: 1998 }) } }] }));
+    assert.deepEqual(await ds.identify(source, 'Series'), { name: name.startsWith('Initial') ? 'Initial D' : '头文字D', year: 1998 });
+  }
+});
+
+test('DeepSeek preserves title numbers, subtitles and movie titles when cleaning seasons', async () => {
+  for (const [name, type] of [['Initial D Fifth Stage', 'Series'], ['Show II', 'Series'], ['第十一季的故事', 'Series'], ['86', 'Series'], ['Season 1', 'Movie']]) {
+    const ds = new DeepseekService({}, async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ name, year: null }) } }] }));
+    assert.deepEqual(await ds.identify(name, type), { name, year: null });
+  }
+});
+
+test('DeepSeek rejects Series identities containing only season metadata', async () => {
+  const ds = new DeepseekService({}, async () => ({ choices: [{ finish_reason: 'stop', message: { content: '{"name":"第一季","year":1998}' } }] }));
+  await assert.rejects(ds.identify('第一季.1998', 'Series'), /媒体名称/);
+});
 test('RSS native rule uses form ruleDef, preserving regex', async () => {
   const qbt = new QbittorrentService({}, async (path, options) => {
     if (path === 'rss/rules') return {};
