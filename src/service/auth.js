@@ -30,6 +30,11 @@ export class AuthService {
   }
   session(id) { this.prune(); return this.sessions.get(id); }
   logout(id) { this.sessions.delete(id); }
+  authenticateMaintenance(ctx) {
+    if (typeof this.config.workflowToken !== 'string' || this.config.workflowToken.length < 24) throw new AppError('清理接口需要配置至少 24 位的 WORKFLOW_API_TOKEN', 503);
+    const auth = ctx.get('Authorization');
+    if (!auth.startsWith('Bearer ') || !tokenEquals(auth.slice(7), this.config.workflowToken)) throw new AppError('清理接口认证失败', 401);
+  }
   authenticate(ctx, webhook = false) {
     const auth = ctx.get('Authorization'), bearer = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
     if (webhook) { if (this.config.webhookAuthRequired === false) return; if (!tokenEquals(bearer, this.config.workflowToken)) throw new AppError('下载通知认证失败', 401); return; }

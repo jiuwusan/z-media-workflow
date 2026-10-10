@@ -207,6 +207,30 @@ node /opt/z-media-workflow/scripts/notify-completed.mjs "%I"
 
 脚本对网络/429/5xx 限量重试；API 对 hash 去重。hash 支持 v1 40 位或 v2 64 位十六进制。启用回调认证时使用 WORKFLOW_API_TOKEN，不能操作管理 API；内网模式的下载回调不需要令牌，仍校验 hash 和媒体类型。
 
+## 外部 crontab 清理文件丢失的种子
+
+`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在“连接与通知”页面的“文件丢失种子清理”面板中，通过“同时删除下载文件”开关选择是否删除文件，并点击“保存清理设置”。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，默认持久化到 `data/cleanup-settings.json`，重启后保留；可用 `CLEANUP_SETTINGS_FILE` 指定文件位置。Docker 默认数据目录已有持久卷。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
+
+外部调用始终要求 `Authorization: Bearer <WORKFLOW_API_TOKEN>`，即使 `WEBHOOK_AUTH_ENABLED=false` 也不会跳过鉴权；服务端 `.env` 中的 `WORKFLOW_API_TOKEN` 必须至少 24 位。外部调用无需登录管理面板或提供 CSRF token；页面调用使用管理员会话和 CSRF 校验。请求体接受布尔值 `dryRun`：`{}` 或 `{"dryRun":true}` 仅预览，`{"dryRun":false}` 按已保存的文件删除设置执行清理，调用方不能通过参数覆盖该设置。页面预览或执行清理时会附带 `expectedDeleteFiles` 校验所确认的开关状态；设置变化时返回 409，要求重新读取并确认。
+
+在运行 crontab 的 Linux 主机上，将 `scripts/cleanup-missing-files.curl.example` 复制为 `/etc/z-media-workflow/.env.cleanup.curl`，修改服务地址和令牌，并执行 `chmod 600 /etc/z-media-workflow/.env.cleanup.curl`。令牌保存在配置文件，不写进 crontab 命令。
+
+先预览：
+
+```sh
+curl -q --config /etc/z-media-workflow/.env.cleanup.curl --data '{"dryRun":true}'
+```
+
+确认预览范围后，在 `crontab -e` 中添加以下示例，每小时执行一次。按实际路径调整锁文件和日志位置，并确保 cron 用户具有写入权限：
+
+```cron
+0 * * * * /usr/bin/flock -n /var/lock/z-media-workflow-cleanup.lock /usr/bin/curl -q --config /etc/z-media-workflow/.env.cleanup.curl --data '{"dryRun":false}' >> /var/log/z-media-workflow-cleanup.log 2>&1
+```
+
+配置使用 `--fail-with-body`（需要 curl 7.76+），HTTP 失败时保留响应体并以非零状态退出。成功返回 `data`，包含 `dryRun`、`deleteFiles`、`matchedCount`、`deletedCount`、`skippedCount`、`failedCount` 和逐项 `items`。预览项状态为 `would_delete`；执行项为 `deleted`、`skipped` 或 `failed`，跳过和失败项附原因。存在失败项时返回 HTTP 502，仍包含其他项的处理结果；同一服务进程内已有清理执行时返回 409。
+
+清理开始时固定本批候选，逐个删除前重新检查状态，删除后回读确认种子已移除；种子消失或状态变化则跳过。qBittorrent 不提供原子的“按状态删除”，重新检查与实际删除之间仍存在短暂间隔。`deleted` 表示种子任务已确认移除，磁盘文件删除由 qBittorrent 处理。清理不触发 Jellyfin 扫描或媒体识别。服务日志记录本批计数，详细结果由调用方保存。
+
 ## API 与分层
 
 ```text
@@ -234,6 +258,8 @@ scripts/          通知与只读联通检查
 | GET | `/api/qbittorrent/rss` | 订阅树与文章 |
 | POST / DELETE | `/api/qbittorrent/rss/feeds` | 添加/删除订阅 |
 | POST | `/api/qbittorrent/rss/refresh` | 刷新订阅 |
+| GET / PUT | `/api/qbittorrent/cleanup-settings` | 管理员读取/保存 `{ deleteFiles }` 文件删除开关 |
+| POST | `/api/qbittorrent/cleanup-missing-files` | `{ dryRun?, expectedDeleteFiles? }` 按已保存开关清理；支持外部 Bearer 令牌或管理员会话 |
 | GET | `/api/qbittorrent/rss/rules` | 规则列表 |
 | PUT / DELETE | `/api/qbittorrent/rss/rules/:name` | 设置/删除规则 |
 | POST | `/api/webhooks/qbittorrent/completed` | `{ hash, type? }` 下载完成通知 |
@@ -245,7 +271,7 @@ scripts/          通知与只读联通检查
 | POST | `/api/workflows/:jobId/search` | `{ itemId, name, year? }` 修正搜索 |
 | POST | `/api/workflows/:jobId/confirm` | `{ itemId, candidateId }` 确认任务已有候选 |
 
-管理 API 仅接受用户名/密码登录后的 HttpOnly 会话 cookie，不再支持管理 Bearer token；同源写入需 CSRF token。分页参数 `page`/`pageSize`，每页最多 200。
+除清理接口及下载通知外，管理 API 仅接受用户名/密码登录后的 HttpOnly 会话 cookie，不再支持管理 Bearer token；同源写入需 CSRF token。分页参数 `page`/`pageSize`，每页最多 200。
 
 ## 运行限制与验证
 

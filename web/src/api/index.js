@@ -10,7 +10,9 @@ export async function api(path, { method = 'GET', body, quiet = false } = {}) {
     const result = await res.json();
     if (!res.ok) {
       if (res.status === 401 && path !== '/auth/login') { setSession(null); window.dispatchEvent(new Event('auth-expired')); }
-      throw new Error(result.error?.message ?? `请求失败 (${res.status})`);
+      const error = new Error(result.error?.message ?? `请求失败 (${res.status})`);
+      if (result.data) error.data = result.data;
+      throw error;
     }
     return result.data;
   } catch (e) { if (!quiet) ElMessage.error(e.message); throw e; }

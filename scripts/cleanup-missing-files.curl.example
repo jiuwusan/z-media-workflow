@@ -1,0 +1,14 @@
+# Copy to /etc/z-media-workflow/.env.cleanup.curl and fill the URL/token.
+# Restrict permissions: chmod 600 /etc/z-media-workflow/.env.cleanup.curl
+# Preview: curl -q --config /etc/z-media-workflow/.env.cleanup.curl --data '{"dryRun":true}'
+# Clean missingFiles tasks using the saved page setting for file deletion:
+# curl -q --config /etc/z-media-workflow/.env.cleanup.curl --data '{"dryRun":false}'
+url = "http://127.0.0.1:3000/api/qbittorrent/cleanup-missing-files"
+request = "POST"
+header = "Authorization: Bearer replace-with-the-server-workflow-token"
+header = "Content-Type: application/json"
+silent
+show-error
+fail-with-body
+connect-timeout = 5
+max-time = 3600

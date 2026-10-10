@@ -27,6 +27,7 @@ export function loadConfig(env = process.env) {
     adminUsername, adminPassword, workflowToken, webhookAuthRequired, sessionMs: number('SESSION_TTL_MS', 8 * 3600000),
     pathMapping: { from: env.QBT_PATH_PREFIX ?? '', to: env.JELLYFIN_PATH_PREFIX ?? '' },
     mediaCursorFile: env.MEDIA_CURSOR_FILE?.trim() || 'data/media-cursors.json',
+    cleanupSettingsFile: env.CLEANUP_SETTINGS_FILE?.trim() || 'data/cleanup-settings.json',
     requestTimeoutMs: number('REQUEST_TIMEOUT_MS', 15000), pollMs: number('POLL_INTERVAL_MS', 2000),
     scanTimeoutMs: number('SCAN_TIMEOUT_MS', 600000), verifyTimeoutMs: number('VERIFY_TIMEOUT_MS', 120000),
     torrentFilesTimeoutMs: number('TORRENT_FILES_TIMEOUT_MS', 120000),

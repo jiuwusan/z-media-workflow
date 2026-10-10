@@ -8,6 +8,8 @@ export function createRouter(config, services) {
   const auth = authController(config, services.auth), workflow = workflowController(services.workflow, services.mediaLibrary), qbt = qbittorrentController(services.qbittorrent), system = systemController(config, services);
   const admin = async (ctx, next) => { services.auth.authenticate(ctx); await next(); };
   const webhook = async (ctx, next) => { services.auth.authenticate(ctx, true); await next(); };
+  const maintenance = async (ctx, next) => { services.auth.authenticateMaintenance(ctx); await next(); };
+  const cleanupAuth = async (ctx, next) => ctx.get('Authorization') ? maintenance(ctx, next) : admin(ctx, next);
   router.get('/health', ctx => { ctx.body = { data: { status: 'ok' } }; });
   router.post('/api/auth/login', auth.login);
   router.get('/api/auth/session', admin, auth.session);
@@ -19,6 +21,9 @@ export function createRouter(config, services) {
   router.put('/api/qbittorrent/added-notification', admin, qbt.setAddedNotification);
   router.put('/api/qbittorrent/completion-notification', admin, qbt.setCompletionNotification);
   router.get('/api/qbittorrent/rss', admin, qbt.rss);
+  router.get('/api/qbittorrent/cleanup-settings', admin, qbt.cleanupSettings);
+  router.put('/api/qbittorrent/cleanup-settings', admin, qbt.saveCleanupSettings);
+  router.post('/api/qbittorrent/cleanup-missing-files', cleanupAuth, qbt.cleanupMissingFiles);
   router.get('/api/qbittorrent/categories', admin, qbt.categories);
   router.get('/api/qbittorrent/rss/rules', admin, qbt.rules);
   router.post('/api/qbittorrent/rss/feeds', admin, qbt.addFeed);

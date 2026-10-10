@@ -6,6 +6,23 @@ import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createApp } from '../src/app.js';
 
+test('cleanup curl template supports cron execution without exposing the token', async t => {
+  const token = 'cleanup-script-secret-at-least-24-characters', calls = [];
+  const server = createApp({ config: { workflowToken: token, webhookAuthRequired: false }, services: {
+    qbittorrent: { cleanupMissingFiles: async input => { calls.push(input); return { dryRun: input.dryRun, failedCount: 0 }; } },
+  } }).listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve)); t.after(() => server.close());
+  await mkdir('.test-artifacts', { recursive: true });
+  const path = resolve(`.test-artifacts/cleanup-${process.pid}.config`);
+  const template = await readFile('scripts/cleanup-missing-files.curl.example', 'utf8');
+  await writeFile(path, template.replace('http://127.0.0.1:3000', `http://127.0.0.1:${server.address().port}`).replace('replace-with-the-server-workflow-token', token));
+  t.after(() => unlink(path));
+  const child = spawn(process.platform === 'win32' ? 'curl.exe' : 'curl', ['-q', '--config', path, '--data', '{"dryRun":false}']);
+  let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
+  const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
+  assert.equal(code, 0); assert.deepEqual(calls, [{ dryRun: false }]); assert.equal(output.includes(token), false);
+});
+
 test('curl config submits URL-encoded v1/v2 hashes with isolated webhook token', async t => {
   const webhookToken = 'curl-test-webhook-token-123456789';
   const inputs = [];

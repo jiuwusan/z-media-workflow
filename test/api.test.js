@@ -4,6 +4,55 @@ import { createApp } from '../src/app.js';
 import { loadConfig } from '../src/config/index.js';
 const admin = 'admin-token-at-least-24-characters', webhook = 'webhook-token-at-least-24-characters';
 
+test('missing-file cleanup requires bearer authentication even when webhook auth is disabled', async t => {
+  const { req, config, services } = await setup(t);
+  config.webhookAuthRequired = false;
+  const calls = [];
+  services.qbittorrent.cleanupMissingFiles = async input => { calls.push(input); return { failedCount: 0, dryRun: input.dryRun }; };
+  const route = '/api/qbittorrent/cleanup-missing-files';
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${webhook}` };
+  assert.equal((await req(route, { method: 'POST' })).status, 401);
+  assert.equal((await req(route, { method: 'POST', headers: { ...headers, Authorization: 'Bearer wrong' }, body: '{}' })).status, 401);
+  const preview = await req(route, { method: 'POST', headers, body: '{}' });
+  assert.equal(preview.status, 200); assert.equal((await preview.json()).data.dryRun, true);
+  assert.equal((await req(route, { method: 'POST', headers, body: '{"dryRun":false}' })).status, 200);
+  assert.deepEqual(calls, [{ dryRun: true }, { dryRun: false }]);
+  for (const body of ['[]', 'null', '{"dryRun":"false"}', '{"states":["error"]}', '{"deleteFiles":false}', '{"hashes":"all"}']) {
+    assert.equal((await req(route, { method: 'POST', headers, body })).status, 400);
+  }
+  assert.equal(calls.length, 2);
+  config.workflowToken = '';
+  assert.equal((await req(route, { method: 'POST', headers, body: '{}' })).status, 503);
+});
+
+test('partial cleanup failures return a non-success HTTP status and details for cron', async t => {
+  const { req, services } = await setup(t);
+  services.qbittorrent.cleanupMissingFiles = async () => ({ failedCount: 1, deletedCount: 2 });
+  const response = await req('/api/qbittorrent/cleanup-missing-files', { method: 'POST', headers: { Authorization: `Bearer ${webhook}`, 'Content-Type': 'application/json' }, body: '{"dryRun":false}' });
+  assert.equal(response.status, 502); assert.equal((await response.json()).data.deletedCount, 2);
+});
+
+test('page cleanup settings require login and CSRF and the saved switch controls cleanup', async t => {
+  const { req, services, login } = await setup(t);
+  let deleteFiles = false;
+  services.qbittorrent.cleanupSettings = () => ({ deleteFiles });
+  services.qbittorrent.saveCleanupSettings = settings => { deleteFiles = settings.deleteFiles; return { deleteFiles }; };
+  services.qbittorrent.cleanupMissingFiles = async input => ({ ...input, deleteFiles, failedCount: 0 });
+  const settings = '/api/qbittorrent/cleanup-settings', cleanup = '/api/qbittorrent/cleanup-missing-files';
+  assert.equal((await req(settings)).status, 401);
+  const headers = await login();
+  assert.equal((await req(settings, { headers })).status, 200);
+  assert.equal((await req(settings, { method: 'PUT', headers: { Cookie: headers.Cookie }, body: '{}' })).status, 403);
+  const saved = await req(settings, { method: 'PUT', headers, body: '{"deleteFiles":true}' });
+  assert.equal(saved.status, 200); assert.deepEqual((await saved.json()).data, { deleteFiles: true });
+  assert.equal((await req(cleanup, { method: 'POST', headers: { Cookie: headers.Cookie }, body: '{}' })).status, 403);
+  const manual = await req(cleanup, { method: 'POST', headers, body: '{"dryRun":false,"expectedDeleteFiles":true}' });
+  assert.equal(manual.status, 200); assert.equal((await manual.json()).data.deleteFiles, true);
+  const cron = await req(cleanup, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${webhook}` }, body: '{"dryRun":false}' });
+  assert.equal((await cron.json()).data.deleteFiles, true);
+  for (const body of ['[]', '{}', '{"deleteFiles":"true"}', '{"deleteFiles":true,"dryRun":false}']) assert.equal((await req(settings, { method: 'PUT', headers, body })).status, 400);
+});
+
 test('existing torrent checks require admin login and CSRF, and cannot override category filtering', async t => {
   const { req, login } = await setup(t), route = '/api/workflows/check-torrents';
   assert.equal((await req(route, { method: 'POST' })).status, 401);

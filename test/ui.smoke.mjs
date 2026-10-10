@@ -8,11 +8,14 @@ import { chromium } from 'playwright';
 import { loadConfig } from '../src/config/index.js';
 import { createServices } from '../src/service/index.js';
 import { createApp } from '../src/app.js';
+import { CleanupSettingsStore } from '../src/util/cleanup-settings.js';
 test('panel login, RSS rules, preview, manual confirmation, responsive navigation and logout', { timeout: 90000 }, async t => {
   const libId = '1'.repeat(32), itemId = '2'.repeat(32), changes = [], errors = [];
   const libraryList = [{ Name: 'movie', ItemId: libId, CollectionType: 'movies', Locations: ['/media/movies'] }];
   let scan = 0, readbacks = 0, applied = null, rules = {}, notification = { autorun_enabled: false, autorun_program: '', autorun_on_torrent_added_enabled: false, autorun_on_torrent_added_program: '' };
   let torrentFilename = 'Journey.to.the.West.II.E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv';
+  const cleanupCalls = [];
+  let missingSeed = { hash: 'b'.repeat(40), name: 'Missing movie', category: 'movies', state: 'missingFiles' };
   // Simulate metadata that remains unchanged after Jellyfin accepts the chosen candidate.
   const item = () => ({ Id: itemId, Type: 'Movie', DateCreated: '2026-10-05T00:00:00Z', Name: 'Dune.2021.1080p', Path: '/media/movies/Dune.2021.1080p.mkv', ProviderIds: { Tmdb: 'wrong-self-identification' }, LockData: false, LockedFields: [], Tags: [], Genres: [] });
   const upstream = createServer(async (req, res) => {
@@ -22,7 +25,11 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
     if (route === '/qbt/api/v2/app/version') { res.end('v5.2.3'); return; }
     if (route === '/qbt/api/v2/app/preferences') return json({ ...notification, mail_notification_password: 'secret-mail' });
     if (route === '/qbt/api/v2/app/setPreferences') { const update = JSON.parse(new URLSearchParams(raw).get('json')); const added = Object.hasOwn(update, 'autorun_on_torrent_added_enabled'); assert.deepEqual(Object.keys(update).sort(), added ? ['autorun_on_torrent_added_enabled', 'autorun_on_torrent_added_program'] : ['autorun_enabled', 'autorun_program']); Object.assign(notification, update); changes.push(added ? 'added-notification' : 'notification'); res.end(''); return; }
-    if (route === '/qbt/api/v2/torrents/info') return json([{ hash: 'a'.repeat(40), name: 'Journey to the West II', category: 'series', progress: 0.1 }]);
+    if (route === '/qbt/api/v2/torrents/info') {
+      const torrents = [{ hash: 'a'.repeat(40), name: 'Journey to the West II', category: 'series', state: 'downloading', progress: 0.1 }, ...(missingSeed ? [missingSeed] : [])];
+      return json(url.searchParams.has('hashes') ? torrents.filter(t => t.hash === url.searchParams.get('hashes')) : torrents);
+    }
+    if (route === '/qbt/api/v2/torrents/delete') { const fields = new URLSearchParams(raw); assert.equal(fields.get('hashes'), missingSeed.hash); cleanupCalls.push(fields.get('deleteFiles')); missingSeed = null; res.end(''); return; }
     if (route === '/qbt/api/v2/torrents/files') return json([{ index: 0, name: torrentFilename }]);
     if (route === '/qbt/api/v2/torrents/renameFile') { const form = new URLSearchParams(raw); assert.equal(form.get('oldPath'), torrentFilename); torrentFilename = form.get('newPath'); changes.push('rename'); res.end(''); return; }
     if (route === '/qbt/api/v2/rss/items') return json({ 剧集: { 测试订阅: { url: 'https://example.com/rss', articles: [{ title: 'Dune 2021', date: '2026-10-02T12:00:00Z', link: 'https://example.com/article' }] } } });
@@ -52,6 +59,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   const config = loadConfig({ ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'browser-test-password-123456', WEBHOOK_AUTH_ENABLED: 'false', QBT_URL: `${base}/qbt/`, QBT_API_KEY: 'mock-qbt', JELLYFIN_URL: `${base}/jelly/`, JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_URL: `${base}/deep/`, DEEPSEEK_API_KEY: 'mock-deep', POLL_INTERVAL_MS: '5', SCAN_TIMEOUT_MS: '1000', VERIFY_TIMEOUT_MS: '1000', JELLYFIN_MOVIE_LIBRARY_ID: libId });
   const cursorDir = await mkdtemp(path.join(tmpdir(), 'workflow-ui-'));
   config.mediaCursorFile = path.join(cursorDir, 'cursors.json');
+  config.cleanupSettingsFile = path.join(cursorDir, 'cleanup.json');
   t.after(() => rm(cursorDir, { recursive: true, force: true }));
   const services = createServices(config), server = createApp({ config, services }).listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r)); t.after(() => server.close()); config.publicUrl = `http://127.0.0.1:${server.address().port}/`;
@@ -134,6 +142,28 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByText('目标名称：Journey.to.the.West.S02E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv', { exact: true }).waitFor();
   await page.getByText('已完成', { exact: true }).first().waitFor(); assert.equal(scan, previousScans);
   await page.getByRole('link', { name: '连接与通知', exact: true }).click();
+  const cleanupPanel = page.locator('section').filter({ has: page.getByRole('heading', { name: '文件丢失种子清理', exact: true }) });
+  const cleanupSwitch = cleanupPanel.getByRole('switch', { name: '同时删除下载文件', exact: true });
+  await cleanupSwitch.waitFor({ state: 'attached' }); assert.equal(await cleanupSwitch.getAttribute('aria-checked'), 'false');
+  await cleanupSwitch.locator('..').click(); assert.equal(await cleanupPanel.getByRole('button', { name: '预览清理', exact: true }).isDisabled(), true);
+  await cleanupPanel.getByRole('button', { name: '保存清理设置', exact: true }).click();
+  await page.getByText('清理设置已保存', { exact: true }).waitFor();
+  await page.reload(); await cleanupSwitch.waitFor({ state: 'attached' });
+  await page.waitForFunction(() => document.querySelector('[aria-label="同时删除下载文件"]')?.getAttribute('aria-checked') === 'true');
+  assert.equal(new CleanupSettingsStore(config.cleanupSettingsFile).get().deleteFiles, true);
+  await cleanupPanel.getByRole('button', { name: '预览清理', exact: true }).click();
+  await cleanupPanel.getByText('Missing movie', { exact: true }).waitFor(); assert.deepEqual(cleanupCalls, []);
+  await cleanupPanel.getByRole('button', { name: '清理文件丢失种子', exact: true }).click();
+  await page.getByText('将清理所有 missingFiles 种子，同时删除其下载文件。继续？', { exact: true }).waitFor();
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/qbittorrent/cleanup-missing-files') && response.request().postData()?.includes('false')), page.getByRole('button', { name: '执行清理', exact: true }).click()]);
+  assert.deepEqual(cleanupCalls, ['true']);
+  missingSeed = { hash: 'b'.repeat(40), name: 'Missing movie', category: 'movies', state: 'missingFiles' };
+  await cleanupSwitch.locator('..').click();
+  await cleanupPanel.getByRole('button', { name: '保存清理设置', exact: true }).click();
+  await cleanupPanel.getByRole('button', { name: '清理文件丢失种子', exact: true }).click();
+  await page.getByText('将清理所有 missingFiles 种子任务，保留下载文件。继续？', { exact: true }).waitFor();
+  await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/qbittorrent/cleanup-missing-files') && response.request().postData()?.includes('false')), page.getByRole('button', { name: '执行清理', exact: true }).click()]);
+  assert.deepEqual(cleanupCalls, ['true', 'false']);
   await page.getByRole('button', { name: '检查已有种子', exact: true }).click();
   await page.getByRole('heading', { name: '已有种子文件检查', exact: true }).waitFor();
   await page.getByText('已检查 1 个分类包含 series 的种子', { exact: true }).waitFor();

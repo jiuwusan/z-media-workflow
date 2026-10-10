@@ -1,7 +1,24 @@
 import { text, validFeedUrl } from '../util/validation.js';
 import { AppError } from '../util/error.js';
+import { log } from '../util/logger.js';
 export function qbittorrentController(qbt) {
   return {
+    async cleanupSettings(ctx) { ctx.body = { data: qbt.cleanupSettings() }; },
+    async saveCleanupSettings(ctx) {
+      const body = ctx.request.body;
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => key !== 'deleteFiles') || typeof body.deleteFiles !== 'boolean') throw new AppError('只接受布尔值 deleteFiles 设置');
+      ctx.body = { data: qbt.saveCleanupSettings({ deleteFiles: body.deleteFiles }) };
+    },
+    async cleanupMissingFiles(ctx) {
+      const body = ctx.request.body === undefined ? {} : ctx.request.body;
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['dryRun', 'expectedDeleteFiles'].includes(key))) throw new AppError('请求体必须是对象，只允许 dryRun 和 expectedDeleteFiles 参数');
+      if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') throw new AppError('dryRun 必须为布尔值');
+      if (body.expectedDeleteFiles !== undefined && typeof body.expectedDeleteFiles !== 'boolean') throw new AppError('expectedDeleteFiles 必须为布尔值');
+      const result = await qbt.cleanupMissingFiles({ dryRun: body.dryRun ?? true, ...(body.expectedDeleteFiles === undefined ? {} : { expectedDeleteFiles: body.expectedDeleteFiles }) });
+      ctx.status = result.failedCount ? 502 : 200; ctx.body = { data: result };
+      const { dryRun, deleteFiles, matchedCount, deletedCount, skippedCount, failedCount } = result;
+      log('qbittorrent.cleanup.finished', { dryRun, deleteFiles, matchedCount, deletedCount, skippedCount, failedCount });
+    },
     async addedNotification(ctx) { ctx.body = { data: await qbt.addedNotification() }; },
     async setAddedNotification(ctx) {
       const body = ctx.request.body ?? {};
