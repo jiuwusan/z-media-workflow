@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AppError } from '../util/error.js';
 import { sleep } from '../util/http.js';
-import { compareProviderIdentity, hasChineseName, hasIdentity, isLaterSeasonCandidate, mediaSource, selectCandidate, validateIdentity } from '../util/media.js';
+import { compareProviderIdentity, hasChineseName, hasIdentity, isLaterSeasonCandidate, mediaSource, movieSearchNames, selectCandidate, validateIdentity } from '../util/media.js';
 import { log, redact } from '../util/logger.js';
 export class WorkflowService {
   constructor(config, services) {
@@ -132,8 +132,17 @@ export class WorkflowService {
   }
   async findCandidates(job, entry, item) {
     delete entry.candidateSearchWarning;
-    this.update(job, `搜索候选：${entry.identity.name}`);
-    let candidates = await this.services.jellyfin.search(item, entry.identity);
+    const names = entry.type === 'Movie' ? movieSearchNames(entry.identity.name) : [entry.identity.name];
+    this.update(job, `搜索候选：${names[0]}`);
+    let candidates = await this.services.jellyfin.search(item, { ...entry.identity, name: names[0] });
+    if (entry.type === 'Movie') {
+      for (const name of names.slice(1)) {
+        if (candidates.some(c => hasIdentity(c) && (entry.identity.year == null || c.ProductionYear === entry.identity.year))) break;
+        this.update(job, `补查电影候选：${name}`);
+        try { candidates = [...await this.services.jellyfin.search(item, { ...entry.identity, name }), ...candidates]; }
+        catch (error) { entry.candidateSearchWarning = redact(error.message, this.secrets); }
+      }
+    }
     if (entry.type === 'Series' && entry.identity.year != null && !candidates.some(c => hasIdentity(c) && c.ProductionYear === entry.identity.year)) {
       this.update(job, `补查节目候选：${entry.identity.name}`);
       try { candidates = [...await this.services.jellyfin.search(item, { ...entry.identity, year: null }), ...candidates]; }

@@ -91,6 +91,23 @@ test('DeepSeek rejects Series identities containing only season metadata', async
   const ds = new DeepseekService({}, async () => ({ choices: [{ finish_reason: 'stop', message: { content: '{"name":"第一季","year":1998}' } }] }));
   await assert.rejects(ds.identify('第一季.1998', 'Series'), /媒体名称/);
 });
+
+test('movie extraction cleans edition suffixes and separates glued part numbers', async () => {
+  for (const [name, expected] of [
+    ['A Chinese Odyssey PartI', 'A Chinese Odyssey Part I'],
+    ['A Chinese Odyssey PartII', 'A Chinese Odyssey Part II'],
+    ['Rambo Extended Cut', 'Rambo'],
+    ["Rambo Director’s Cut", 'Rambo'],
+    ['Rambo (Extended Cut)', 'Rambo'],
+    ['Show PartII Extended Cut', 'Show Part II'],
+    ['The Final Cut', 'The Final Cut'],
+    ['Extended Cut', 'Extended Cut'],
+    ['Extended Cut of a Story', 'Extended Cut of a Story'],
+  ]) {
+    const ai = new DeepseekService({}, async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ name, year: 1995 }) } }] }));
+    assert.deepEqual(await ai.identify(name + '.1995.BluRay.1080p', 'Movie'), { name: expected, year: 1995 });
+  }
+});
 test('RSS native rule uses form ruleDef, preserving regex', async () => {
   const qbt = new QbittorrentService({}, async (path, options) => {
     if (path === 'rss/rules') return {};

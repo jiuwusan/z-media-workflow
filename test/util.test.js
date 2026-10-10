@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHttpClient } from '../src/util/http.js';
-import { mapPath, containsPath, selectCandidate, mediaSource, validateIdentity } from '../src/util/media.js';
+import { mapPath, containsPath, selectCandidate, mediaSource, validateIdentity, cleanMovieName, movieSearchNames } from '../src/util/media.js';
 
 test('HTTP keeps Jellyfin base prefix and auth; refuses redirect to another host', async t => {
   const server = createServer((req, res) => {
@@ -38,4 +38,12 @@ test('series source comes from folder and movie source comes from filename', () 
   assert.throws(() => validateIdentity({ name: '', year: 2020 }));
   assert.throws(() => validateIdentity({ name: 'Dune', year: '2021' }));
   assert.deepEqual(validateIdentity({ name: 'Dune', year: null }), { name: 'Dune', year: null });
+});
+
+test('movie spelling variants retain part identity and other title words', () => {
+  assert.deepEqual(movieSearchNames('A Chinese Odyssey Part One: Pandora Box'), ['A Chinese Odyssey Part One: Pandora Box', 'A Chinese Odyssey Part I: Pandora Box', 'A Chinese Odyssey Part 1: Pandora Box']);
+  assert.deepEqual(movieSearchNames('Example Part 2'), ['Example Part Two', 'Example Part 2', 'Example Part II']);
+  for (const name of ['Rambo', 'The Departed', 'Example II', 'Example Part XI']) assert.deepEqual(movieSearchNames(name), [name]);
+  assert.equal(cleanMovieName('Example PartIII Extended Edition'), 'Example Part III');
+  assert.equal(cleanMovieName('The Final Cut'), 'The Final Cut');
 });

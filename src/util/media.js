@@ -14,6 +14,24 @@ export function mapPath(value, { from, to } = {}) {
   return from && to && containsPath(from, value) ? normalizePath(`${to}${normalized.slice(normalizePath(from).length)}`) : normalized;
 }
 export const normalizeName = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '');
+const movieParts = [
+  ['I', '1', 'One'], ['II', '2', 'Two'], ['III', '3', 'Three'], ['IV', '4', 'Four'], ['V', '5', 'Five'],
+  ['VI', '6', 'Six'], ['VII', '7', 'Seven'], ['VIII', '8', 'Eight'], ['IX', '9', 'Nine'], ['X', '10', 'Ten'],
+];
+export function cleanMovieName(name) {
+  const separated = name.replace(/\b(Part)(VIII|VII|III|VI|IV|IX|II|V|X|I)\b/gi, '$1 $2');
+  // Only remove a known edition suffix when a nonempty title precedes it.
+  const cleaned = separated.replace(/[\s._-]+[（(\[]?\s*(?:Extended[\s._-]+(?:Cut|Edition)|Director['’]s[\s._-]+Cut|Theatrical[\s._-]+Cut|Unrated[\s._-]+(?:Cut|Edition))\s*[）)\]]?\s*$/i, '').trim();
+  return cleaned || separated;
+}
+export function movieSearchNames(name) {
+  const match = /\bPart\s+(VIII|VII|III|VI|IV|IX|II|V|X|I|10|[1-9]|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten)\b/i.exec(name);
+  if (!match) return [name];
+  const equivalents = movieParts.find(parts => parts.some(part => part.toLowerCase() === match[1].toLowerCase()));
+  const alternative = part => name.slice(0, match.index) + 'Part ' + part + name.slice(match.index + match[0].length);
+  // Word-form installments give providers a more specific query than "Part I".
+  return [...new Set([alternative(equivalents[2]), name, alternative(equivalents[0]), alternative(equivalents[1])])];
+}
 export function providerEntries(item) { return Object.entries(item.ProviderIds ?? {}).filter(([k, v]) => /^(tmdb|tvdb|imdb)$/i.test(k) && v).map(([k, v]) => [k.toLowerCase(), String(v)]); }
 export function hasIdentity(item) { return providerEntries(item).length > 0; }
 export const hasChineseName = item => /\p{Script=Han}/u.test(item.Name ?? '');

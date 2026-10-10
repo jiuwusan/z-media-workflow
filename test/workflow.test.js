@@ -27,6 +27,53 @@ test('manual preview and identification read library items without a full scan',
   }
 });
 
+test('movie search prefers word-form part numbers without removing the part or year', async () => {
+  for (const [name, preferred] of [['A Chinese Odyssey Part I', 'A Chinese Odyssey Part One'], ['A Chinese Odyssey Part II', 'A Chinese Odyssey Part Two']]) {
+    const { workflow, deps } = fixture(); const queries = [];
+    deps.deepseek.identify = async () => ({ name, year: 1995 });
+    deps.jellyfin.search = async (item, identity) => {
+      assert.equal(identity.year, 1995); queries.push(identity.name);
+      return identity.name === preferred ? [{ Name: '正确分部', ProductionYear: 1995, ProviderIds: { Tmdb: name } }] : [
+        { Name: 'Other installment', ProductionYear: 1995, ProviderIds: { Tmdb: 'wrong-part' } },
+        { Name: '正确分部', ProductionYear: 1995, ProviderIds: { Tmdb: name } },
+      ];
+    };
+    deps.deepseek.chooseCandidate = async () => ({ candidateId: null, confidence: 'low', reason: 'AI uncertain' });
+    const result = await done(workflow, workflow.enqueue({}));
+    assert.equal(result.status, 'completed'); assert.deepEqual(queries, [preferred]);
+    assert.equal(result.items[0].identity.name, name);
+    assert.equal(result.items[0].confirmed.ProviderIds.Tmdb, name);
+    assert.equal(result.items[0].selectionMethod, 'fallback');
+  }
+});
+
+test('movie spelling retries do not relax the year constraint', async () => {
+  const { workflow, deps, events } = fixture();
+  deps.deepseek.identify = async () => ({ name: 'Example Part I', year: 1995 });
+  deps.jellyfin.search = async () => [{ Name: 'Example Part I', ProductionYear: 2000, ProviderIds: { Tmdb: 'wrong-year' } }];
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'needs_review'); assert.deepEqual(events, []);
+});
+
+test('matching movie candidates do not require supplemental spelling searches', async () => {
+  const { workflow, deps } = fixture(); let searches = 0;
+  deps.deepseek.identify = async () => ({ name: 'Example Part I', year: 1995 });
+  deps.jellyfin.search = async () => { searches++; return [{ Name: 'Example Part I', ProductionYear: 1995, ProviderIds: { Tmdb: 'example' } }]; };
+  assert.equal((await done(workflow, workflow.enqueue({}))).status, 'completed');
+  assert.equal(searches, 1);
+});
+
+test('a failed movie spelling search does not prevent trying the next equivalent', async () => {
+  const { workflow, deps } = fixture();
+  deps.deepseek.identify = async () => ({ name: 'Example Part I', year: 1995 });
+  deps.jellyfin.search = async (item, identity) => {
+    if (identity.name === 'Example Part I') throw new Error('provider unavailable');
+    return identity.name === 'Example Part 1' ? [{ Name: 'Example Part I', ProductionYear: 1995, ProviderIds: { Tmdb: 'example' } }] : [];
+  };
+  const result = await done(workflow, workflow.enqueue({}));
+  assert.equal(result.status, 'completed'); assert.equal(result.items[0].candidateSearchWarning, 'provider unavailable');
+});
+
 test('retrying failed manual and download identification skips the full scan', async () => {
   for (const input of [{}, { hash: 'f'.repeat(40) }]) {
     const { workflow, deps, events } = fixture();
