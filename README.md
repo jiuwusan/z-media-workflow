@@ -9,40 +9,43 @@ Koa + Vue 3 媒体工作流与中文管理面板，无数据库。qBittorrent RS
 ```powershell
 npm ci
 npm ci --prefix web
-# 首次部署且没有 .env 时：复制 .env.example 为 .env 并填写凭据
+# 仅新部署：复制示例，填写服务地址、凭据和管理员账号
+New-Item -ItemType Directory -Force data
+Copy-Item config.example.json data/config.json
 npm run build
 npm start
 ```
 
-打开 http://localhost:3000，使用 `.env` 的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 登录。当前调试环境已写入被 Git 忽略的 `.env`，管理员密码和回调令牌分别配置；不在文档或构建产物中记录真实令牌。
+打开 http://localhost:3000，使用 `data/config.json` 的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 登录。已有 `.env` 时无需复制示例，首次启动会将旧配置和默认值迁入 JSON，保留原文件；此后修改 JSON，旧环境变量不再覆盖已保存配置。配置包含凭据，被 Git 和镜像构建排除。
 
-开发时分别运行 `npm run dev` 与 `npm run dev:web`，打开 http://localhost:5173。生产配置 `NODE_ENV=production`、实际 `PUBLIC_URL`，HTTPS 时设置 `COOKIE_SECURE=true`；代理部署时按环境设置 `TRUST_PROXY`。面板与 API 使用同源部署。
+开发时分别运行 `npm run dev` 与 `npm run dev:web`，打开 http://localhost:5173。在 JSON 中填写实际 `PUBLIC_URL`，HTTPS 时设置 `COOKIE_SECURE: true`；代理部署时按环境设置 `TRUST_PROXY`。面板与 API 使用同源部署。
 
-管理账号使用环境配置，无需数据库：
+服务地址、API 密钥、管理员账号、认证开关、目录映射、超时、队列限制、游标文件路径和清理开关统一使用 `config.json`，完整字段见 `config.example.json`。字段名沿用原配置名，布尔值与数字使用 JSON 原生类型；其他配置修改后重启生效，页面保存的清理开关即时生效。默认文件为 `data/config.json`，仅位置选择使用 `CONFIG_FILE` 环境变量。`.env` 只用于历史迁移、文件位置和 Compose 部署参数，`NODE_ENV` 属于 Node.js 运行环境。
 
-```dotenv
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=填写管理员密码
+```json
+{
+  "ADMIN_USERNAME": "admin",
+  "ADMIN_PASSWORD": "填写管理员密码"
+}
 ```
 
 旧的 `ADMIN_API_TOKEN` 已停用。登录接口接受 `{ "username", "password" }`，成功后创建 HttpOnly 会话，密码使用 scrypt 比对；错误的用户名或密码返回相同提示，保留登录尝试限制。修改账号或密码后重启服务，旧会话失效。下载回调是否校验 token 仍由 `WEBHOOK_AUTH_ENABLED` 独立控制。
 
-登录及管理 API 不限制请求的 Origin，允许通过内网 IP、域名或 localhost 访问；登录仍需用户名/密码，管理操作仍需会话及 CSRF 校验。旧的 `DEV_ORIGIN` 环境变量不再使用。`PUBLIC_URL`（Docker 中为 `DOCKER_PUBLIC_URL`）用于推导默认回调地址，不再用于限制登录来源；`WORKFLOW_CALLBACK_URL` 可单独设置为 qBittorrent 容器可达的回调地址，当前为 `http://172.29.0.1:3000/api/webhooks/qbittorrent/completed`。未指定回调地址时从 `PUBLIC_URL` 推导。
+登录及管理 API 不限制请求的 Origin，允许通过内网 IP、域名或 localhost 访问；登录仍需用户名/密码，管理操作仍需会话及 CSRF 校验。旧的 `DEV_ORIGIN` 不再使用。JSON 中的 `PUBLIC_URL` 用于推导默认回调地址，不再用于限制登录来源；`WORKFLOW_CALLBACK_URL` 可单独设置为 qBittorrent 容器可达的回调地址，当前为 `http://172.29.0.1:3000/api/webhooks/qbittorrent/completed`。未指定回调地址时从 `PUBLIC_URL` 推导。
 
 ## Docker Compose 部署
 
 参考 `senior-buyer`，使用 `jiuwusan/z-media-workflow:latest` 镜像、外部 `wk` 网络和 `restart: always`。镜像基于 Node.js 22，分阶段构建 Vue 面板及后端生产依赖，由非 root 用户运行 Koa，内置 `/health` 健康检查。管理面板和 API 共用一个容器，宿主机默认端口为 **3000**。
 
-部署机器只需 Docker Engine / Docker Desktop、Compose v2、`docker-compose.yml` 和 `.env`，无需本地构建镜像。首次部署将 `.env.example` 复制为 `.env` 并填写各服务密钥、管理员用户名/密码及可选回调令牌；已有 `.env` 时保留配置。在 `.env` 中追加或调整：
+部署机器只需 Docker Engine / Docker Desktop、支持可选 env_file 的 Compose v2、`docker-compose.yml` 和配置文件，无需本地构建镜像。旧部署保留 `.env`，启动时自动迁移到持久卷中的 `/app/data/config.json`。新部署复制 `config.example.json` 为 `config.json` 并填写凭据，首次启动前将它写入持久卷。在 `.env` 中仅保留 Compose 使用的部署参数（可选）：
 
 ```dotenv
 DOCKER_IMAGE=jiuwusan/z-media-workflow:latest
 DOCKER_HOST_PORT=3000
-DOCKER_PUBLIC_URL=http://你的服务器地址:3000/
 DOCKER_STOP_GRACE_PERIOD=35s
 ```
 
-使用 HTTPS 反向代理时，`DOCKER_PUBLIC_URL` 填外部 HTTPS 地址，设置 `COOKIE_SECURE=true`；受信任代理转发时设置 `TRUST_PROXY=true`。Compose 会将容器内 `HOST`、`PORT`、`NODE_ENV` 固定为 `0.0.0.0`、`3000`、`production`，并用 `DOCKER_PUBLIC_URL` 覆盖本地开发的 `PUBLIC_URL`。修改宿主机端口时同步修改 `DOCKER_PUBLIC_URL`。
+Docker 配置中的 `HOST` 使用 `0.0.0.0`、`PORT` 使用 `3000`；`PUBLIC_URL` 填外部可访问地址，HTTPS 代理时设置 `COOKIE_SECURE: true`，受信任代理转发时设置 `TRUST_PROXY: true`。修改宿主机端口时同步修改 JSON 中的 `PUBLIC_URL`。Compose 中旧应用环境变量只用于迁移，不覆盖已有 JSON。
 
 在项目根目录执行：
 
@@ -52,16 +55,18 @@ docker network ls --filter name=wk
 docker network create wk
 docker compose config --quiet
 docker compose pull
+# 仅新部署：Linux shell 中将填写好的 config.json 初始化到命名卷
+docker compose run --rm -T --no-deps --user root z-media-workflow sh -c 'cat > /app/data/config.json && chown node:node /app/data/config.json && chmod 600 /app/data/config.json' < config.json
 docker compose up -d
 docker compose ps
 docker compose logs -f --tail=100
 ```
 
-打开 `http://你的服务器地址:3000/`，使用 `.env` 的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 登录。qBittorrent 完成通知脚本的 `WORKFLOW_CALLBACK_URL` 填 `http://你的服务器地址:3000/api/webhooks/qbittorrent/completed`；如果 qBittorrent 容器也在 `wk` 网络，可用 `http://z-media-workflow:3000/api/webhooks/qbittorrent/completed`。通知脚本仍应在 qBittorrent 所在机器/容器运行。
+打开 `http://你的服务器地址:3000/`，使用 JSON 中的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 登录。qBittorrent 完成通知脚本的 `WORKFLOW_CALLBACK_URL` 填 `http://你的服务器地址:3000/api/webhooks/qbittorrent/completed`；如果 qBittorrent 容器也在 `wk` 网络，可用 `http://z-media-workflow:3000/api/webhooks/qbittorrent/completed`。通知脚本仍应在 qBittorrent 所在机器/容器运行。
 
 GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker compose up -d` 更新服务。查看三方连接可执行 `docker compose exec z-media-workflow npm run check:connections`。
 
-`.env` 通过 Compose 在运行时注入，已从构建上下文排除。服务通过远程 API 操作媒体，无需挂载媒体目录。识别游标使用 JSON 文件，Compose 将 `workflow-data` 命名卷挂载到 `/app/data`，更新镜像或重建容器后保留游标；`docker compose down -v` 会删除该卷。日志输出到 Docker，单个日志文件最多 10 MB，保留 3 个。任务记录和登录会话保存在内存，重启后重新登录；默认关闭等待为 30 秒，调整 `SHUTDOWN_TIMEOUT_MS` 时应将 `DOCKER_STOP_GRACE_PERIOD` 设置得更长。
+服务通过远程 API 操作媒体，无需挂载媒体目录。Compose 将 `workflow-data` 命名卷挂载到 `/app/data`，更新镜像或重建容器后保留配置和游标；`docker compose down -v` 会删除该卷。修改容器配置时可先 `docker cp z-media-workflow:/app/data/config.json ./config.json`，停服务后编辑并复制回同一路径，再重启；复制回后确保 `node` 用户可读。日志输出到 Docker，单个日志文件最多 10 MB，保留 3 个。任务记录和登录会话保存在内存，重启后重新登录；默认关闭等待为 30 秒，调整 JSON 中的 `SHUTDOWN_TIMEOUT_MS` 时应将 `.env` 的 `DOCKER_STOP_GRACE_PERIOD` 设置得更长。
 
 ## GitHub Actions 发布镜像
 
@@ -156,11 +161,11 @@ curl -q --fail --silent --show-error --connect-timeout 5 --max-time 15 --retry 2
 curl -q --fail --silent --show-error --connect-timeout 5 --max-time 15 --retry 2 --retry-connrefused --data-urlencode "hash=%I" "http://172.29.0.1:3000/api/webhooks/qbittorrent/completed"
 ```
 
-`.env` 与 Compose 中均已设置内网模式。关闭回调认证时无需设置 `WORKFLOW_API_TOKEN`。需要恢复回调认证时设置 `WEBHOOK_AUTH_ENABLED=true`、填写独立回调令牌并重启服务，再使用下面的配置文件方式。直接运行 `npm start` 且没有指定该选项时，仍默认校验 token。
+JSON 配置示例默认使用内网模式。关闭回调认证时无需设置 `WORKFLOW_API_TOKEN`。需要恢复回调认证时在 JSON 中设置 `WEBHOOK_AUTH_ENABLED: true`、填写独立回调令牌并重启服务，再使用下面的配置文件方式。没有指定该选项时仍默认校验 token。
 
 #### 启用 token 校验时的 curl 配置（可选）
 
-复制 `scripts/notify-completed.curl.example` 为 **qBittorrent 容器内** `/config/z-media-workflow/.env.notify.curl`，将 `header` 中的占位值改为服务端 `.env` 的独立 `WORKFLOW_API_TOKEN`。已填写令牌的本地 `scripts/.env.notify.curl` 被 Git 忽略，部署时复制该文件即可。按实际持久化挂载修改路径，让 qBittorrent 运行用户可读，并设置 `chmod 600`。
+复制 `scripts/notify-completed.curl.example` 为 **qBittorrent 容器内** `/config/z-media-workflow/.env.notify.curl`，将 `header` 中的占位值改为服务端 `config.json` 的独立 `WORKFLOW_API_TOKEN`。curl 配置属于外部客户端调用模板，curl 无法直接读取 JSON。按实际持久化挂载修改路径，让 qBittorrent 运行用户可读，并设置 `chmod 600`。
 
 启用回调认证时，在管理面板选择“curl（无需 Node.js）”，填写上述配置文件路径，生成通知命令并保存启用。也可在截图对应的“torrent 完成时运行”中填写：
 
@@ -178,14 +183,16 @@ curl -q --fail --show-error --connect-timeout 5 --max-time 15 http://172.29.0.1:
 
 ### Node.js 通知（可选）
 
-在 **qBittorrent 所在机器/容器** 部署 `scripts/notify-completed.mjs`（只依赖 Node.js 22+，无需安装 npm 包）。复制 `scripts/.env.notify.example` 为脚本同目录的 `.env.notify`，填入：
+在 **qBittorrent 所在机器/容器** 部署 `scripts/notify-completed.mjs`（只依赖 Node.js 22+，无需安装 npm 包）。复制 `scripts/config.notify.example.json` 为脚本同目录的 `config.json`，或通过 `CONFIG_FILE` 指向服务端同一 JSON。旧 `.env.notify` 或通知环境变量仅在没有 JSON 时兼容读取。填入：
 
-```dotenv
-WORKFLOW_CALLBACK_URL=http://172.29.0.1:3000/api/webhooks/qbittorrent/completed
-WORKFLOW_API_TOKEN=服务端.env中的独立回调令牌
+```json
+{
+  "WORKFLOW_CALLBACK_URL": "http://172.29.0.1:3000/api/webhooks/qbittorrent/completed",
+  "WORKFLOW_API_TOKEN": "服务端config.json中的独立回调令牌"
+}
 ```
 
-地址必须可从 qBittorrent 所在机器访问。服务默认监听 127.0.0.1；跨机器调用时将 `HOST` 改为可访问地址，如 `0.0.0.0`，设置实际 `PUBLIC_URL` 并按部署环境开放端口。
+地址必须可从 qBittorrent 所在机器访问。跨机器调用时在 JSON 中将 `HOST` 设置为可访问地址，如 `0.0.0.0`，并填写实际 `PUBLIC_URL`。
 
 qBittorrent 设置 → 下载 → 下载完成后运行外部程序：
 
@@ -203,15 +210,27 @@ node /opt/z-media-workflow/scripts/notify-completed.mjs "%I"
 
 可选增加 `Movie` 或 `Series` 参数，仅当这套通知明确只用于一种媒体类型。混合下载通常无需参数，按入库条目识别类型。Docker 需确保容器内存在 Node.js、脚本及配置，并能访问服务；宿主机 localhost 与容器 localhost 不等同。通知命令和 RSS 规则只在面板明确保存时更新。
 
-将 `scripts/notify-completed.mjs` 和配置好的 `.env.notify` 部署在 qBittorrent 容器同一目录，例如 `/opt/z-media-workflow/scripts/`，完成命令填写 `node "/opt/z-media-workflow/scripts/notify-completed.mjs" "%I"`。该路径是模板，需按实际挂载修改。只在工作流容器中放置脚本，无法让另一容器的 qBittorrent 执行它。启用后仅对后续下载完成事件生效；已完成媒体可在面板手动扫描。
+将 `scripts/notify-completed.mjs` 和配置好的 `config.json` 部署在 qBittorrent 容器同一目录，例如 `/opt/z-media-workflow/scripts/`，完成命令填写 `node "/opt/z-media-workflow/scripts/notify-completed.mjs" "%I"`。该路径是模板，需按实际挂载修改。只在工作流容器中放置脚本，无法让另一容器的 qBittorrent 执行它。启用后仅对后续下载完成事件生效；已完成媒体可在面板手动扫描。
 
 脚本对网络/429/5xx 限量重试；API 对 hash 去重。hash 支持 v1 40 位或 v2 64 位十六进制。启用回调认证时使用 WORKFLOW_API_TOKEN，不能操作管理 API；内网模式的下载回调不需要令牌，仍校验 hash 和媒体类型。
 
 ## 外部 crontab 清理文件丢失的种子
 
-`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在“连接与通知”页面的“文件丢失种子清理”面板中，通过“同时删除下载文件”开关选择是否删除文件，并点击“保存清理设置”。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，默认持久化到 `data/cleanup-settings.json`，重启后保留；可用 `CLEANUP_SETTINGS_FILE` 指定文件位置。Docker 默认数据目录已有持久卷。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
+`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在“连接与通知”页面的“文件丢失种子清理”面板中，通过“同时删除下载文件”开关选择是否删除文件，并点击“保存清理设置”。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，集中保存在 `data/config.json`，重启后保留；可用 `CONFIG_FILE` 指定文件位置。Compose 固定使用持久卷中的 `/app/data/config.json`。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
 
-外部调用始终要求 `Authorization: Bearer <WORKFLOW_API_TOKEN>`，即使 `WEBHOOK_AUTH_ENABLED=false` 也不会跳过鉴权；服务端 `.env` 中的 `WORKFLOW_API_TOKEN` 必须至少 24 位。外部调用无需登录管理面板或提供 CSRF token；页面调用使用管理员会话和 CSRF 校验。请求体接受布尔值 `dryRun`：`{}` 或 `{"dryRun":true}` 仅预览，`{"dryRun":false}` 按已保存的文件删除设置执行清理，调用方不能通过参数覆盖该设置。页面预览或执行清理时会附带 `expectedDeleteFiles` 校验所确认的开关状态；设置变化时返回 409，要求重新读取并确认。
+清理配置是同一 `config.json` 中的 `torrentCleanup` 字段，下面只展示这部分。页面保存时只更新 `torrentCleanup.deleteFiles`，保留服务地址、令牌和其他配置项。手工编辑后重启服务生效。媒体游标属于运行数据，仍保存到 `media-cursors.json`。
+
+```json
+{
+  "torrentCleanup": {
+    "deleteFiles": false
+  }
+}
+```
+
+升级时，若 `config.json` 尚无 `torrentCleanup` 配置，自动导入原来的 `data/cleanup-settings.json`；旧版自定义 `CLEANUP_SETTINGS_FILE` 也支持作为迁移来源。迁移成功后使用 `config.json`，保留旧文件，不再更新它。新配置优先，旧文件不会覆盖已保存的开关；配置损坏或迁移失败会阻止启动，避免静默改变删除行为。
+
+外部调用始终要求 `Authorization: Bearer <WORKFLOW_API_TOKEN>`，即使 `WEBHOOK_AUTH_ENABLED=false` 也不会跳过鉴权；服务端 `config.json` 中的 `WORKFLOW_API_TOKEN` 必须至少 24 位。外部调用无需登录管理面板或提供 CSRF token；页面调用使用管理员会话和 CSRF 校验。请求体接受布尔值 `dryRun`：`{}` 或 `{"dryRun":true}` 仅预览，`{"dryRun":false}` 按已保存的文件删除设置执行清理，调用方不能通过参数覆盖该设置。页面预览或执行清理时会附带 `expectedDeleteFiles` 校验所确认的开关状态；设置变化时返回 409，要求重新读取并确认。
 
 在运行 crontab 的 Linux 主机上，将 `scripts/cleanup-missing-files.curl.example` 复制为 `/etc/z-media-workflow/.env.cleanup.curl`，修改服务地址和令牌，并执行 `chmod 600 /etc/z-media-workflow/.env.cleanup.curl`。令牌保存在配置文件，不写进 crontab 命令。
 

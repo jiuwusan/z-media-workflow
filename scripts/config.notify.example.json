@@ -1,0 +1,4 @@
+{
+  "WORKFLOW_CALLBACK_URL": "http://172.29.0.1:3000/api/webhooks/qbittorrent/completed",
+  "WORKFLOW_API_TOKEN": "replace-with-the-server-workflow-token"
+}

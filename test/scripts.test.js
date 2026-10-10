@@ -3,8 +3,28 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { createApp } from '../src/app.js';
+
+test('notification reads JSON configuration instead of conflicting environment values', async t => {
+  const calls = [], token = 'notification-json-secret-123456789';
+  const server = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    calls.push({ token: req.headers.authorization, data: JSON.parse(raw) });
+    res.setHeader('Content-Type', 'application/json'); res.end('{"data":{"id":"json-job"}}');
+  }).listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve)); t.after(() => server.close());
+  const root = await mkdtemp(join(tmpdir(), 'notify-json-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, 'config.json');
+  await writeFile(file, JSON.stringify({ WORKFLOW_CALLBACK_URL: `http://127.0.0.1:${server.address().port}/callback`, WORKFLOW_API_TOKEN: token }));
+  const child = spawn(process.execPath, ['scripts/notify-completed.mjs', 'a'.repeat(40)], { env: { ...process.env, CONFIG_FILE: file, WORKFLOW_CALLBACK_URL: 'http://127.0.0.1:1/wrong', WORKFLOW_API_TOKEN: 'wrong' } });
+  let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
+  const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
+  assert.equal(code, 0); assert.deepEqual(calls, [{ token: `Bearer ${token}`, data: { hash: 'a'.repeat(40) } }]);
+  assert.equal(output.includes(token), false);
+});
 
 test('cleanup curl template supports cron execution without exposing the token', async t => {
   const token = 'cleanup-script-secret-at-least-24-characters', calls = [];

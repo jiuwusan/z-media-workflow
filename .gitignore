@@ -12,6 +12,8 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Runtime data
 data/
+config.json
+config.json.*.tmp
 pids
 *.pid
 *.seed

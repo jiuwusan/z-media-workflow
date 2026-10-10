@@ -56,10 +56,11 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   }).listen(0, '127.0.0.1');
   await new Promise(r => upstream.once('listening', r)); t.after(() => upstream.close());
   const base = `http://127.0.0.1:${upstream.address().port}`;
-  const config = loadConfig({ ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'browser-test-password-123456', WEBHOOK_AUTH_ENABLED: 'false', QBT_URL: `${base}/qbt/`, QBT_API_KEY: 'mock-qbt', JELLYFIN_URL: `${base}/jelly/`, JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_URL: `${base}/deep/`, DEEPSEEK_API_KEY: 'mock-deep', POLL_INTERVAL_MS: '5', SCAN_TIMEOUT_MS: '1000', VERIFY_TIMEOUT_MS: '1000', JELLYFIN_MOVIE_LIBRARY_ID: libId });
   const cursorDir = await mkdtemp(path.join(tmpdir(), 'workflow-ui-'));
+  const config = loadConfig({ CONFIG_FILE: path.join(cursorDir, 'config.json'), CLEANUP_SETTINGS_FILE: path.join(cursorDir, 'cleanup-settings.json'), ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'browser-test-password-123456', WEBHOOK_AUTH_ENABLED: 'false', QBT_URL: `${base}/qbt/`, QBT_API_KEY: 'mock-qbt', JELLYFIN_URL: `${base}/jelly/`, JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_URL: `${base}/deep/`, DEEPSEEK_API_KEY: 'mock-deep', POLL_INTERVAL_MS: '5', SCAN_TIMEOUT_MS: '1000', VERIFY_TIMEOUT_MS: '1000' });
   config.mediaCursorFile = path.join(cursorDir, 'cursors.json');
-  config.cleanupSettingsFile = path.join(cursorDir, 'cleanup.json');
+  config.configFile = path.join(cursorDir, 'config.json');
+  config.legacyCleanupSettingsFile = path.join(cursorDir, 'cleanup-settings.json');
   t.after(() => rm(cursorDir, { recursive: true, force: true }));
   const services = createServices(config), server = createApp({ config, services }).listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r)); t.after(() => server.close()); config.publicUrl = `http://127.0.0.1:${server.address().port}/`;
@@ -150,7 +151,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByText('清理设置已保存', { exact: true }).waitFor();
   await page.reload(); await cleanupSwitch.waitFor({ state: 'attached' });
   await page.waitForFunction(() => document.querySelector('[aria-label="同时删除下载文件"]')?.getAttribute('aria-checked') === 'true');
-  assert.equal(new CleanupSettingsStore(config.cleanupSettingsFile).get().deleteFiles, true);
+  assert.equal(new CleanupSettingsStore(config.configFile).get().deleteFiles, true);
   await cleanupPanel.getByRole('button', { name: '预览清理', exact: true }).click();
   await cleanupPanel.getByText('Missing movie', { exact: true }).waitFor(); assert.deepEqual(cleanupCalls, []);
   await cleanupPanel.getByRole('button', { name: '清理文件丢失种子', exact: true }).click();

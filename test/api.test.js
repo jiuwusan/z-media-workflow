@@ -210,8 +210,8 @@ test('internal webhook accepts tokenless curl forms while management APIs remain
 
 test('disabled webhook auth does not require a workflow token; enabled auth still does', () => {
   const env = { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'correct-test-password-123', QBT_API_KEY: 'mock-qbt', JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_API_KEY: 'mock-ds', WEBHOOK_AUTH_ENABLED: 'false' };
-  assert.equal(loadConfig(env).webhookAuthRequired, false);
-  assert.throws(() => loadConfig({ ...env, WEBHOOK_AUTH_ENABLED: 'true' }), /WORKFLOW_API_TOKEN/);
+  assert.equal(loadConfig(env, { persist: false }).webhookAuthRequired, false);
+  assert.throws(() => loadConfig({ ...env, WEBHOOK_AUTH_ENABLED: 'true' }, { persist: false }), /WORKFLOW_API_TOKEN/);
 });
 
 test('browser login origin and container callback address can differ', async t => {

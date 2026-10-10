@@ -3,6 +3,9 @@
 web/dist
 .test-artifacts
 data
+config.json
+**/config.json
+**/config.json.*.tmp
 .env
 .env.*
 **/.env

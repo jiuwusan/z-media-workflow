@@ -2,12 +2,18 @@ import { readFile } from 'node:fs/promises';
 import { parseEnv } from 'node:util';
 const [hash, type] = process.argv.slice(2);
 async function main() {
+  let json;
+  const filename = process.env.CONFIG_FILE || new URL('config.json', import.meta.url);
+  try {
+    json = JSON.parse(await readFile(filename, 'utf8'));
+    if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('invalid config');
+  } catch (e) { if (e.code !== 'ENOENT' || process.env.CONFIG_FILE) throw e; }
   let fileEnv = {};
-  try { fileEnv = parseEnv(await readFile(new URL('.env.notify', import.meta.url), 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  const env = { ...fileEnv, ...process.env };
+  if (!json) try { fileEnv = parseEnv(await readFile(new URL('.env.notify', import.meta.url), 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  const env = json ?? { ...fileEnv, ...process.env };
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(hash ?? '')) throw new Error('请传入有效的 torrent hash（qBittorrent %I）');
   if (type && !['Movie', 'Series'].includes(type)) throw new Error('可选类型为 Movie 或 Series');
-  if (!env.WORKFLOW_CALLBACK_URL || !env.WORKFLOW_API_TOKEN) throw new Error('请配置 .env.notify 或通知环境变量');
+  if (typeof env.WORKFLOW_CALLBACK_URL !== 'string' || !env.WORKFLOW_CALLBACK_URL || typeof env.WORKFLOW_API_TOKEN !== 'string' || !env.WORKFLOW_API_TOKEN) throw new Error('请配置通知 config.json');
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const response = await fetch(env.WORKFLOW_CALLBACK_URL, { method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.WORKFLOW_API_TOKEN}` }, body: JSON.stringify({ hash, ...(type ? { type } : {}) }) });
