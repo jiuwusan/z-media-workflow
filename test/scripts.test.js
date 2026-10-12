@@ -19,7 +19,7 @@ test('notification reads JSON configuration instead of conflicting environment v
   const root = await mkdtemp(join(tmpdir(), 'notify-json-')); t.after(() => rm(root, { recursive: true, force: true }));
   const file = join(root, 'config.json');
   await writeFile(file, JSON.stringify({ WORKFLOW_CALLBACK_URL: `http://127.0.0.1:${server.address().port}/callback`, WORKFLOW_API_TOKEN: token }));
-  const child = spawn(process.execPath, ['scripts/notify-completed.mjs', 'a'.repeat(40)], { env: { ...process.env, CONFIG_FILE: file, WORKFLOW_CALLBACK_URL: 'http://127.0.0.1:1/wrong', WORKFLOW_API_TOKEN: 'wrong' } });
+  const child = spawn(process.execPath, ['scripts/notify-completed.mjs', 'a'.repeat(40), '--config', file], { env: { ...process.env, CONFIG_FILE: 'ignored', WORKFLOW_CALLBACK_URL: 'http://127.0.0.1:1/wrong', WORKFLOW_API_TOKEN: 'wrong' } });
   let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
   const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
   assert.equal(code, 0); assert.deepEqual(calls, [{ token: `Bearer ${token}`, data: { hash: 'a'.repeat(40) } }]);
@@ -76,7 +76,10 @@ test('standalone notification submits hash and independent token without logging
   }).listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r)); t.after(() => server.close());
   const token = 'standalone-webhook-secret';
-  const child = spawn(process.execPath, ['scripts/notify-completed.mjs', 'a'.repeat(40), 'Movie'], { env: { ...process.env, WORKFLOW_CALLBACK_URL: `http://127.0.0.1:${server.address().port}/callback`, WORKFLOW_API_TOKEN: token }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const root = await mkdtemp(join(tmpdir(), 'notify-json-')); t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, 'config.json');
+  await writeFile(file, JSON.stringify({ WORKFLOW_CALLBACK_URL: `http://127.0.0.1:${server.address().port}/callback`, WORKFLOW_API_TOKEN: token }));
+  const child = spawn(process.execPath, ['scripts/notify-completed.mjs', 'a'.repeat(40), 'Movie', '--config', file], { stdio: ['ignore', 'pipe', 'pipe'] });
   let output = ''; child.stdout.on('data', d => output += d); child.stderr.on('data', d => output += d);
   const code = await new Promise(r => child.on('close', r)); assert.equal(code, 0);
   assert.deepEqual(received, { token: `Bearer ${token}`, method: 'POST', body: { hash: 'a'.repeat(40), type: 'Movie' } });

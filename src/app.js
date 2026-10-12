@@ -7,21 +7,41 @@ import { createRouter } from './router/index.js';
 import { createServices } from './service/index.js';
 import { AuthService } from './service/auth.js';
 import { redact, log } from './util/logger.js';
-export function createApp({ config, services = createServices(config) }) {
-  services.auth ??= new AuthService(config);
+import { AppError } from './util/error.js';
+export function createApp({ config, setup, servicesFactory = createServices, services = setup && !setup.initialized ? {} : servicesFactory(config) }) {
   const app = new Koa(); app.proxy = config.trustProxy;
-  const secrets = [config.qbtKey, config.jellyfinKey, config.deepseekKey, config.adminPassword, config.workflowToken];
+  let routes, allowedMethods;
+  function activate(nextConfig = config, nextServices = services) {
+    Object.assign(config, nextConfig); services = nextServices; services.auth ??= new AuthService(config);
+    app.proxy = config.trustProxy; app.services = services;
+    const router = createRouter(config, services); routes = router.routes(); allowedMethods = router.allowedMethods();
+  }
+  if (!setup || setup.initialized) activate();
   app.use(async (ctx, next) => {
     ctx.set('X-Content-Type-Options', 'nosniff'); ctx.set('X-Frame-Options', 'DENY'); ctx.set('Referrer-Policy', 'same-origin');
     ctx.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'");
     if (ctx.path.startsWith('/api')) ctx.set('Cache-Control', 'no-store');
     try { await next(); }
-    catch (e) { ctx.status = e.status ?? 500; const message = e.status ? redact(e.message, secrets) : '服务内部错误'; ctx.body = { error: { code: e.code ?? 'ERROR', message } }; if (ctx.status >= 500) log('request.failed', { path: ctx.path, error: redact(e.message, secrets) }); }
+    catch (e) { const secrets = [config.qbtKey, config.jellyfinKey, config.deepseekKey, config.adminPassword, config.workflowToken]; ctx.status = e.status ?? 500; const message = e.status ? redact(e.message, secrets) : '服务内部错误'; ctx.body = { error: { code: e.code ?? 'ERROR', message } }; if (ctx.status >= 500) log('request.failed', { path: ctx.path, error: redact(e.message, secrets) }); }
   });
   const parseJson = bodyParser({ enableTypes: ['json'], jsonLimit: '128kb' });
   const parseCallbackForm = bodyParser({ enableTypes: ['form'], formLimit: '8kb' });
   app.use((ctx, next) => ctx.method === 'POST' && ctx.path === '/api/webhooks/qbittorrent/completed' && ctx.is('application/x-www-form-urlencoded') ? parseCallbackForm(ctx, next) : parseJson(ctx, next));
-  const router = createRouter(config, services); app.use(router.routes()); app.use(router.allowedMethods());
+  app.use(async (ctx, next) => {
+    if (ctx.path === '/api/setup/status' && ctx.method === 'GET') { ctx.body = { data: setup ? setup.status(ctx) : { initialized: true } }; return; }
+    if (ctx.path === '/api/setup' && ctx.method === 'POST') {
+      if (!setup) throw new AppError('服务已完成初始化', 409);
+      let prepared;
+      const configured = setup.complete(ctx, candidate => { prepared = servicesFactory(candidate); });
+      activate(configured, prepared);
+      ctx.status = 201; ctx.body = { data: { initialized: true } }; return;
+    }
+    if (!routes && ctx.path === '/health') { ctx.body = { data: { status: 'ok', initialized: false } }; return; }
+    if (!routes && ctx.path.startsWith('/api')) throw new AppError('请先完成首次运行配置', 503);
+    await next();
+  });
+  app.use((ctx, next) => routes ? routes(ctx, next) : next());
+  app.use((ctx, next) => allowedMethods ? allowedMethods(ctx, next) : next());
   const root = fileURLToPath(new URL('../web/dist/', import.meta.url));
   const staticFiles = serve(root, { hidden: false, index: 'index.html' });
   app.use(async (ctx, next) => {

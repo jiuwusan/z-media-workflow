@@ -1,22 +1,18 @@
 import { readFile } from 'node:fs/promises';
-import { parseEnv } from 'node:util';
-const [hash, type] = process.argv.slice(2);
 async function main() {
-  let json;
-  const filename = process.env.CONFIG_FILE || new URL('config.json', import.meta.url);
-  try {
-    json = JSON.parse(await readFile(filename, 'utf8'));
-    if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('invalid config');
-  } catch (e) { if (e.code !== 'ENOENT' || process.env.CONFIG_FILE) throw e; }
-  let fileEnv = {};
-  if (!json) try { fileEnv = parseEnv(await readFile(new URL('.env.notify', import.meta.url), 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  const env = json ?? { ...fileEnv, ...process.env };
+  const args = process.argv.slice(2), index = args.indexOf('--config');
+  let filename = new URL('config.json', import.meta.url);
+  if (index >= 0) { if (!args[index + 1]) throw new Error('缺少配置文件路径'); filename = args[index + 1]; args.splice(index, 2); }
+  const [hash, type] = args;
+  if (args.length > 2) throw new Error('通知参数无效');
+  const settings = JSON.parse(await readFile(filename, 'utf8'));
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('通知配置无效');
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(hash ?? '')) throw new Error('请传入有效的 torrent hash（qBittorrent %I）');
   if (type && !['Movie', 'Series'].includes(type)) throw new Error('可选类型为 Movie 或 Series');
-  if (typeof env.WORKFLOW_CALLBACK_URL !== 'string' || !env.WORKFLOW_CALLBACK_URL || typeof env.WORKFLOW_API_TOKEN !== 'string' || !env.WORKFLOW_API_TOKEN) throw new Error('请配置通知 config.json');
+  if (typeof settings.WORKFLOW_CALLBACK_URL !== 'string' || !settings.WORKFLOW_CALLBACK_URL || typeof settings.WORKFLOW_API_TOKEN !== 'string' || !settings.WORKFLOW_API_TOKEN) throw new Error('请配置通知 config.json');
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const response = await fetch(env.WORKFLOW_CALLBACK_URL, { method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.WORKFLOW_API_TOKEN}` }, body: JSON.stringify({ hash, ...(type ? { type } : {}) }) });
+      const response = await fetch(settings.WORKFLOW_CALLBACK_URL, { method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.WORKFLOW_API_TOKEN}` }, body: JSON.stringify({ hash, ...(type ? { type } : {}) }) });
       if (!response.ok) { if (response.status >= 500 || response.status === 429) throw new Error('通知服务暂不可用'); throw new Error(`通知被拒绝（HTTP ${response.status}）`); }
       const result = await response.json(); console.log(`已通知工作流服务，任务 ID：${result.data.id}`); return;
     } catch (e) {

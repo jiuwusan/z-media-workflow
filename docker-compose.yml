@@ -1,27 +1,13 @@
 services:
   z-media-workflow:
-    image: ${DOCKER_IMAGE:-jiuwusan/z-media-workflow:latest}
+    image: jiuwusan/z-media-workflow:latest
     container_name: z-media-workflow
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      NODE_ENV: production
-      WEBHOOK_AUTH_ENABLED: ${WEBHOOK_AUTH_ENABLED:-false}
-      HOST: 0.0.0.0
-      PORT: 3000
-      PUBLIC_URL: ${DOCKER_PUBLIC_URL:-http://localhost:3000/}
-      WORKFLOW_CALLBACK_URL: ${WORKFLOW_CALLBACK_URL:-http://172.29.0.1:3000/api/webhooks/qbittorrent/completed}
-      MEDIA_CURSOR_FILE: /app/data/media-cursors.json
-      CONFIG_FILE: /app/data/config.json
-      TZ: Asia/Shanghai
     ports:
-      - '${DOCKER_HOST_PORT:-3000}:3000'
+      - '3000:3000'
     volumes:
       - workflow-data:/app/data
     restart: always
-    init: true
-    stop_grace_period: ${DOCKER_STOP_GRACE_PERIOD:-35s}
+    stop_grace_period: 35s
     logging:
       driver: json-file
       options:

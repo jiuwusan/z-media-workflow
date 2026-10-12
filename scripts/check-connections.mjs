@@ -1,7 +1,8 @@
-import 'dotenv/config';
 import { loadConfig } from '../src/config/index.js';
 import { createServices } from '../src/service/index.js';
-const config = loadConfig(), services = createServices(config);
+const config = loadConfig();
+if (!config) { console.error('请先通过页面完成首次运行配置'); process.exit(1); }
+const services = createServices(config);
 const checks = {
   qbittorrent: async () => ({ version: await services.qbittorrent.version() }),
   jellyfin: async () => ({ version: (await services.jellyfin.info()).Version, libraries: (await services.mediaLibrary.libraries()).map(l => ({ name: l.Name, type: l.CollectionType, directories: l.Locations })) }),

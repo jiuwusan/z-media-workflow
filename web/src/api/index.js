@@ -2,10 +2,10 @@ import { ElMessage } from 'element-plus';
 let csrfToken = '', authenticated = false;
 export function setSession(session) { csrfToken = session?.csrfToken ?? ''; authenticated = Boolean(session); }
 export function hasSession() { return authenticated; }
-export async function api(path, { method = 'GET', body, quiet = false } = {}) {
+export async function api(path, { method = 'GET', body, quiet = false, csrf } = {}) {
   try {
     const headers = { 'Content-Type': 'application/json' };
-    if (method !== 'GET') headers['X-CSRF-Token'] = csrfToken;
+    if (method !== 'GET') headers['X-CSRF-Token'] = csrf ?? csrfToken;
     const res = await fetch(`/api${path}`, { method, headers, credentials: 'same-origin', ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const result = await res.json();
     if (!res.ok) {

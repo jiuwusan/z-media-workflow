@@ -9,18 +9,17 @@ Koa + Vue 3 媒体工作流与中文管理面板，无数据库。qBittorrent RS
 ```powershell
 npm ci
 npm ci --prefix web
-# 仅新部署：复制示例，填写服务地址、凭据和管理员账号
-New-Item -ItemType Directory -Force data
-Copy-Item config.example.json data/config.json
 npm run build
 npm start
 ```
 
-打开 http://localhost:3000，使用 `data/config.json` 的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 登录。已有 `.env` 时无需复制示例，首次启动会将旧配置和默认值迁入 JSON，保留原文件；此后修改 JSON，旧环境变量不再覆盖已保存配置。配置包含凭据，被 Git 和镜像构建排除。
+打开 http://localhost:3000。没有 `data/config.json` 时，服务监听 `0.0.0.0:3000` 并显示首次运行引导：创建管理员账号（密码至少 12 位）、填写 qBittorrent / Jellyfin / DeepSeek 的地址和 API 密钥、确认面板及回调地址。保存后自动生成回调令牌，并立即进入登录页，无需重启。已有配置时直接进入正常登录；现有本地配置会继续使用。
 
 开发时分别运行 `npm run dev` 与 `npm run dev:web`，打开 http://localhost:5173。在 JSON 中填写实际 `PUBLIC_URL`，HTTPS 时设置 `COOKIE_SECURE: true`；代理部署时按环境设置 `TRUST_PROXY`。面板与 API 使用同源部署。
 
-服务地址、API 密钥、管理员账号、认证开关、目录映射、超时、队列限制、游标文件路径和清理开关统一使用 `config.json`，完整字段见 `config.example.json`。字段名沿用原配置名，布尔值与数字使用 JSON 原生类型；其他配置修改后重启生效，页面保存的清理开关即时生效。默认文件为 `data/config.json`，仅位置选择使用 `CONFIG_FILE` 环境变量。`.env` 只用于历史迁移、文件位置和 Compose 部署参数，`NODE_ENV` 属于 Node.js 运行环境。
+服务地址、API 密钥、管理员账号、认证开关、目录映射、超时、队列限制、游标文件路径和清理开关统一保存到固定的 `data/config.json`，完整字段见 `config.example.json`。布尔值与数字使用 JSON 原生类型；其他配置修改后重启生效，页面保存的清理开关即时生效。应用与通知脚本不读取环境变量或旧 `.env`，不再执行环境配置迁移；仍只有旧 `.env` 的部署需通过引导重新填写。配置文件包含凭据，被 Git 和镜像构建排除。
+
+首次配置完成后，引导接口关闭，不能覆盖已有文件；提交需有效的初始化 cookie 和 CSRF token。配置文件损坏或字段无效会阻止启动，避免误进入初始化流程。首次运行阶段 `/health` 仍正常响应，业务 API 返回 503，直到配置完成。
 
 ```json
 {
@@ -37,15 +36,9 @@ npm start
 
 参考 `senior-buyer`，使用 `jiuwusan/z-media-workflow:latest` 镜像、外部 `wk` 网络和 `restart: always`。镜像基于 Node.js 22，分阶段构建 Vue 面板及后端生产依赖，由非 root 用户运行 Koa，内置 `/health` 健康检查。管理面板和 API 共用一个容器，宿主机默认端口为 **3000**。
 
-部署机器只需 Docker Engine / Docker Desktop、支持可选 env_file 的 Compose v2、`docker-compose.yml` 和配置文件，无需本地构建镜像。旧部署保留 `.env`，启动时自动迁移到持久卷中的 `/app/data/config.json`。新部署复制 `config.example.json` 为 `config.json` 并填写凭据，首次启动前将它写入持久卷。在 `.env` 中仅保留 Compose 使用的部署参数（可选）：
+部署机器只需 Docker Engine / Docker Desktop、Compose v2 和 `docker-compose.yml`，无需 `.env` 或预先复制配置文件。启动容器后打开面板，按首次运行引导填写并保存。已有持久卷中的 `/app/data/config.json` 时直接使用。Compose 固定镜像、端口和停止等待时间；需要调整时直接编辑 YAML 对应字段。
 
-```dotenv
-DOCKER_IMAGE=jiuwusan/z-media-workflow:latest
-DOCKER_HOST_PORT=3000
-DOCKER_STOP_GRACE_PERIOD=35s
-```
-
-Docker 配置中的 `HOST` 使用 `0.0.0.0`、`PORT` 使用 `3000`；`PUBLIC_URL` 填外部可访问地址，HTTPS 代理时设置 `COOKIE_SECURE: true`，受信任代理转发时设置 `TRUST_PROXY: true`。修改宿主机端口时同步修改 JSON 中的 `PUBLIC_URL`。Compose 中旧应用环境变量只用于迁移，不覆盖已有 JSON。
+Docker 配置中的 `HOST` 使用 `0.0.0.0`、`PORT` 使用 `3000`；引导中的面板访问地址填外部可访问地址。HTTPS 代理时可在 JSON 中设置 `COOKIE_SECURE: true`，受信任代理转发时设置 `TRUST_PROXY: true`。修改宿主机端口时同步修改 JSON 中的 `PUBLIC_URL`。
 
 在项目根目录执行：
 
@@ -55,8 +48,6 @@ docker network ls --filter name=wk
 docker network create wk
 docker compose config --quiet
 docker compose pull
-# 仅新部署：Linux shell 中将填写好的 config.json 初始化到命名卷
-docker compose run --rm -T --no-deps --user root z-media-workflow sh -c 'cat > /app/data/config.json && chown node:node /app/data/config.json && chmod 600 /app/data/config.json' < config.json
 docker compose up -d
 docker compose ps
 docker compose logs -f --tail=100
@@ -66,7 +57,7 @@ docker compose logs -f --tail=100
 
 GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker compose up -d` 更新服务。查看三方连接可执行 `docker compose exec z-media-workflow npm run check:connections`。
 
-服务通过远程 API 操作媒体，无需挂载媒体目录。Compose 将 `workflow-data` 命名卷挂载到 `/app/data`，更新镜像或重建容器后保留配置和游标；`docker compose down -v` 会删除该卷。修改容器配置时可先 `docker cp z-media-workflow:/app/data/config.json ./config.json`，停服务后编辑并复制回同一路径，再重启；复制回后确保 `node` 用户可读。日志输出到 Docker，单个日志文件最多 10 MB，保留 3 个。任务记录和登录会话保存在内存，重启后重新登录；默认关闭等待为 30 秒，调整 JSON 中的 `SHUTDOWN_TIMEOUT_MS` 时应将 `.env` 的 `DOCKER_STOP_GRACE_PERIOD` 设置得更长。
+服务通过远程 API 操作媒体，无需挂载媒体目录。Compose 将 `workflow-data` 命名卷挂载到 `/app/data`，更新镜像或重建容器后保留配置和游标；`docker compose down -v` 会删除该卷。修改容器配置时可先 `docker cp z-media-workflow:/app/data/config.json ./config.json`，停服务后编辑并复制回同一路径，再重启；复制回后确保 `node` 用户可读。日志输出到 Docker，单个日志文件最多 10 MB，保留 3 个。任务记录和登录会话保存在内存，重启后重新登录；默认关闭等待为 30 秒，调整 JSON 中的 `SHUTDOWN_TIMEOUT_MS` 时应将 Compose 的 `stop_grace_period` 设置得更长。
 
 ## GitHub Actions 发布镜像
 
@@ -78,7 +69,7 @@ GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker com
 
 流程先运行 `npm test`，通过后从 Dockerfile 构建 `linux/amd64` 和 `linux/arm64` 镜像并推送到 Docker Hub。`master` 发布 `latest`、`master` 和 `sha-<提交短哈希>` 标签；手动构建其他分支发布分支和提交标签，不覆盖 `latest`。PR 运行测试和镜像构建，不登录 Docker Hub、不推送镜像。
 
-部署默认拉取 `jiuwusan/z-media-workflow:latest`；需要固定版本时，将 `.env` 的 `DOCKER_IMAGE` 改为对应提交标签后执行 `docker compose pull` 和 `docker compose up -d`。
+部署默认拉取 `jiuwusan/z-media-workflow:latest`；需要固定版本时，修改 Compose 的 `image` 为对应提交标签后执行 `docker compose pull` 和 `docker compose up -d`。
 
 ## 面板
 
@@ -183,7 +174,7 @@ curl -q --fail --show-error --connect-timeout 5 --max-time 15 http://172.29.0.1:
 
 ### Node.js 通知（可选）
 
-在 **qBittorrent 所在机器/容器** 部署 `scripts/notify-completed.mjs`（只依赖 Node.js 22+，无需安装 npm 包）。复制 `scripts/config.notify.example.json` 为脚本同目录的 `config.json`，或通过 `CONFIG_FILE` 指向服务端同一 JSON。旧 `.env.notify` 或通知环境变量仅在没有 JSON 时兼容读取。填入：
+在 **qBittorrent 所在机器/容器** 部署 `scripts/notify-completed.mjs`（只依赖 Node.js 22+，无需安装 npm 包）。复制 `scripts/config.notify.example.json` 为脚本同目录的 `config.json`，或在通知命令末尾追加 `--config /实际路径/config.json`。脚本只读取 JSON，填写：
 
 ```json
 {
@@ -216,7 +207,7 @@ node /opt/z-media-workflow/scripts/notify-completed.mjs "%I"
 
 ## 外部 crontab 清理文件丢失的种子
 
-`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在“连接与通知”页面的“文件丢失种子清理”面板中，通过“同时删除下载文件”开关选择是否删除文件，并点击“保存清理设置”。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，集中保存在 `data/config.json`，重启后保留；可用 `CONFIG_FILE` 指定文件位置。Compose 固定使用持久卷中的 `/app/data/config.json`。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
+`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在“连接与通知”页面的“文件丢失种子清理”面板中，通过“同时删除下载文件”开关选择是否删除文件，并点击“保存清理设置”。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，集中保存在 `data/config.json`，重启后保留；Compose 使用持久卷中的 `/app/data/config.json`。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
 
 清理配置是同一 `config.json` 中的 `torrentCleanup` 字段，下面只展示这部分。页面保存时只更新 `torrentCleanup.deleteFiles`，保留服务地址、令牌和其他配置项。手工编辑后重启服务生效。媒体游标属于运行数据，仍保存到 `media-cursors.json`。
 
@@ -228,7 +219,7 @@ node /opt/z-media-workflow/scripts/notify-completed.mjs "%I"
 }
 ```
 
-升级时，若 `config.json` 尚无 `torrentCleanup` 配置，自动导入原来的 `data/cleanup-settings.json`；旧版自定义 `CLEANUP_SETTINGS_FILE` 也支持作为迁移来源。迁移成功后使用 `config.json`，保留旧文件，不再更新它。新配置优先，旧文件不会覆盖已保存的开关；配置损坏或迁移失败会阻止启动，避免静默改变删除行为。
+已有 `config.json` 中的 `torrentCleanup` 配置继续保留；没有该字段时默认保留下载文件。旧独立清理文件不再作为应用配置来源。
 
 外部调用始终要求 `Authorization: Bearer <WORKFLOW_API_TOKEN>`，即使 `WEBHOOK_AUTH_ENABLED=false` 也不会跳过鉴权；服务端 `config.json` 中的 `WORKFLOW_API_TOKEN` 必须至少 24 位。外部调用无需登录管理面板或提供 CSRF token；页面调用使用管理员会话和 CSRF 校验。请求体接受布尔值 `dryRun`：`{}` 或 `{"dryRun":true}` 仅预览，`{"dryRun":false}` 按已保存的文件删除设置执行清理，调用方不能通过参数覆盖该设置。页面预览或执行清理时会附带 `expectedDeleteFiles` 校验所确认的开关状态；设置变化时返回 409，要求重新读取并确认。
 
@@ -266,6 +257,8 @@ scripts/          通知与只读联通检查
 | 方法 | 路径 | 功能 |
 | --- | --- | --- |
 | GET | `/health` | 存活检查 |
+| GET | `/api/setup/status` | 首次运行状态；未初始化时提供 CSRF token |
+| POST | `/api/setup` | 首次配置并保存，只允许配置文件不存在时调用 |
 | POST | `/api/auth/login`、`/api/auth/logout` | 管理会话登录/退出 |
 | GET | `/api/auth/session` | 会话和 CSRF token |
 | GET | `/api/dashboard` | 统计、目标库与脱敏配置 |
@@ -290,7 +283,7 @@ scripts/          通知与只读联通检查
 | POST | `/api/workflows/:jobId/search` | `{ itemId, name, year? }` 修正搜索 |
 | POST | `/api/workflows/:jobId/confirm` | `{ itemId, candidateId }` 确认任务已有候选 |
 
-除清理接口及下载通知外，管理 API 仅接受用户名/密码登录后的 HttpOnly 会话 cookie，不再支持管理 Bearer token；同源写入需 CSRF token。分页参数 `page`/`pageSize`，每页最多 200。
+首次配置接口使用初始化 cookie 和 CSRF token；配置后关闭写入。其他管理 API 仅接受用户名/密码登录后的 HttpOnly 会话 cookie；清理接口和下载通知仍支持各自的 Bearer 认证。同源管理写入需 CSRF token。分页参数 `page`/`pageSize`，每页最多 200。
 
 ## 运行限制与验证
 

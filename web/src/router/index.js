@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import { api, hasSession, setSession } from '../api/index.js';
 const router = createRouter({ history: createWebHistory(), routes: [
   { path: '/login', component: () => import('../views/Login.vue') },
+  { path: '/setup', component: () => import('../views/Setup.vue') },
   { path: '/', component: () => import('../views/Dashboard.vue'), meta: { title: '工作流概览', subtitle: '从下载完成，到媒体就绪。' } },
   { path: '/rss', component: () => import('../views/Rss.vue'), meta: { title: 'RSS 订阅', subtitle: '管理订阅源与 qBittorrent 自动下载规则。' } },
   { path: '/jobs', component: () => import('../views/Jobs.vue'), meta: { title: '工作流任务', subtitle: '跟踪扫描、识别和媒体信息确认的每一步。' } },
@@ -11,10 +12,13 @@ const router = createRouter({ history: createWebHistory(), routes: [
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ] });
 router.beforeEach(async to => {
+  const state = await api('/setup/status', { quiet: true });
+  if (!state.initialized) return to.path === '/setup' ? undefined : '/setup';
+  if (to.path === '/setup') return '/login';
   if (to.path === '/login') return;
   if (!hasSession()) {
     try { setSession(await api('/auth/session', { quiet: true })); } catch { return '/login'; }
   }
 });
-window.addEventListener('auth-expired', () => { if (router.currentRoute.value.path !== '/login') router.replace('/login'); });
+window.addEventListener('auth-expired', () => { if (!['/login', '/setup'].includes(router.currentRoute.value.path)) router.replace('/login'); });
 export default router;

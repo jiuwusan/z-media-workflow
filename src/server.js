@@ -1,16 +1,15 @@
-import 'dotenv/config';
-import { loadConfig } from './config/index.js';
-import { createServices } from './service/index.js';
+import { SetupService } from './service/setup.js';
 import { createApp } from './app.js';
 import { log } from './util/logger.js';
-const config = loadConfig(), services = createServices(config), app = createApp({ config, services });
+const setup = new SetupService(), config = setup.config ?? { ...setup.bootstrap }, app = createApp({ config, setup });
 const server = app.listen(config.port, config.host, () => log('server.started', { url: config.publicUrl }));
 let closing = false;
 async function shutdown() {
   if (closing) return; closing = true;
-  services.workflow.stopping = true;
+  const workflow = app.services?.workflow;
+  if (workflow) workflow.stopping = true;
   const timer = setTimeout(() => process.exit(1), config.shutdownMs + 1000); timer.unref();
-  server.close(); const drained = await services.workflow.close(config.shutdownMs);
+  server.close(); const drained = workflow ? await workflow.close(config.shutdownMs) : true;
   server.closeAllConnections(); log('server.stopped', { drained }); clearTimeout(timer); process.exit(drained ? 0 : 1);
 }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
