@@ -26,7 +26,9 @@ test('first-run wizard saves config, handles validation and remains disabled aft
   await page.goto(`${base}/login`); await page.getByRole('heading', { name: '首次运行配置' }).waitFor();
   await page.getByRole('button', { name: '下一步', exact: true }).click();
   await page.getByText('请填写用户名、至少 12 位的密码，并确保两次密码一致。', { exact: true }).waitFor();
-  await page.getByRole('textbox', { name: '管理员用户名', exact: true }).fill('new-admin');
+  const username = '管理员'.repeat(100);
+  await page.getByRole('textbox', { name: '管理员用户名', exact: true }).fill(username);
+  assert.equal(await page.getByRole('textbox', { name: '管理员用户名', exact: true }).inputValue(), username);
   await page.getByRole('textbox', { name: '管理员密码', exact: true }).fill('new-browser-password-123');
   await page.getByRole('textbox', { name: '确认密码', exact: true }).fill('new-browser-password-123');
   await page.getByRole('button', { name: '下一步', exact: true }).click();
@@ -36,7 +38,9 @@ test('first-run wizard saves config, handles validation and remains disabled aft
   await mkdir('.test-artifacts', { recursive: true }); await page.screenshot({ path: '.test-artifacts/setup-mobile.png', fullPage: true });
   await page.getByRole('button', { name: '保存并进入登录', exact: true }).click();
   await page.getByRole('heading', { name: '登录工作空间', exact: true }).waitFor();
-  assert.equal(loadConfig(file).adminUsername, 'new-admin');
+  assert.equal(loadConfig(file).adminUsername, username);
+  await page.getByRole('textbox', { name: '用户名', exact: true }).fill(username);
+  assert.equal(await page.getByRole('textbox', { name: '用户名', exact: true }).inputValue(), username);
   await page.goto(`${base}/setup`); await page.getByRole('heading', { name: '登录工作空间', exact: true }).waitFor();
   assert.deepEqual(errors, []);
 });

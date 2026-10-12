@@ -45,13 +45,15 @@ test('services that cannot initialize leave setup available without persisting c
 });
 test('setup persists defaults once, activates login immediately and disables further setup', async t => {
   const { request, headers, file } = await fixture(t);
-  const response = await request('/api/setup', { method: 'POST', headers, body: JSON.stringify(input) });
+  const account = { ...input, ADMIN_USERNAME: '管理员'.repeat(100) };
+  const response = await request('/api/setup', { method: 'POST', headers, body: JSON.stringify(account) });
   assert.equal(response.status, 201); assert.deepEqual((await response.json()).data, { initialized: true });
   const saved = JSON.parse(readFileSync(file, 'utf8'));
   assert.equal(saved.ADMIN_PASSWORD, input.ADMIN_PASSWORD); assert.equal(saved.REQUEST_TIMEOUT_MS, 15000);
   assert.ok(saved.WORKFLOW_API_TOKEN.length >= 24); assert.deepEqual(saved.torrentCleanup, { deleteFiles: false });
   assert.equal(loadConfig(file).qbtKey, input.QBT_API_KEY);
-  const login = await request('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: input.ADMIN_USERNAME, password: input.ADMIN_PASSWORD }) });
+  assert.equal(loadConfig(file).adminUsername, account.ADMIN_USERNAME);
+  const login = await request('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: account.ADMIN_USERNAME, password: account.ADMIN_PASSWORD }) });
   assert.equal(login.status, 200);
   const before = readFileSync(file, 'utf8');
   assert.equal((await request('/api/setup', { method: 'POST', headers, body: JSON.stringify(input) })).status, 409);

@@ -31,7 +31,7 @@ async function save() {
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
       <el-form label-position="top" :disabled="busy" @submit.prevent="step < 2 ? next() : save()">
         <div v-show="step === 0">
-          <el-form-item label="管理员用户名"><el-input v-model="form.ADMIN_USERNAME" aria-label="管理员用户名" autocomplete="username" maxlength="128" /></el-form-item>
+          <el-form-item label="管理员用户名"><el-input v-model="form.ADMIN_USERNAME" aria-label="管理员用户名" autocomplete="username" /></el-form-item>
           <el-form-item label="管理员密码"><el-input v-model="form.ADMIN_PASSWORD" aria-label="管理员密码" type="password" show-password autocomplete="new-password" maxlength="1024" placeholder="至少 12 位" /></el-form-item>
           <el-form-item label="确认密码"><el-input v-model="confirmPassword" aria-label="确认密码" type="password" show-password autocomplete="new-password" maxlength="1024" /></el-form-item>
         </div>

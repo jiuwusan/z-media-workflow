@@ -53,7 +53,7 @@ export function validateConfig(document, filename = CONFIG_FILE) {
     else config[field] = value;
   }
   for (const key of ['HOST', 'ADMIN_USERNAME', 'ADMIN_PASSWORD', 'QBT_API_KEY', 'JELLYFIN_API_KEY', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'MEDIA_CURSOR_FILE']) if (!values[key]?.trim()) throw new AppError(`请设置 ${key}`);
-  if (values.ADMIN_USERNAME.length > 128 || values.ADMIN_PASSWORD.length > 1024) throw new AppError('管理员用户名或密码长度无效');
+  if (values.ADMIN_PASSWORD.length > 1024) throw new AppError('管理员密码长度无效');
   if (values.WEBHOOK_AUTH_ENABLED && values.WORKFLOW_API_TOKEN.length < 24) throw new AppError('请设置至少 24 位的 WORKFLOW_API_TOKEN');
   if (!values.torrentCleanup || Array.isArray(values.torrentCleanup) || typeof values.torrentCleanup.deleteFiles !== 'boolean') throw new AppError('torrentCleanup 配置无效');
   return config;

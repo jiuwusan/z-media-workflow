@@ -20,7 +20,7 @@ export class AuthService {
     if (attempt.count >= 10) throw new AppError('登录尝试过多，请稍后再试', 429);
     attempt.count++; this.attempts.set(ip, attempt);
     if (this.attempts.size > 1000) this.attempts.delete(this.attempts.keys().next().value);
-    if (typeof username !== 'string' || typeof password !== 'string' || username.length > 128 || password.length > 1024 || !this.passwordHash) throw new AppError('用户名或密码错误', 401);
+    if (typeof username !== 'string' || typeof password !== 'string' || password.length > 1024 || !this.passwordHash) throw new AppError('用户名或密码错误', 401);
     const expected = await this.passwordHash, actual = await derivePassword(password, this.passwordSalt, 32);
     if (!timingSafeEqual(actual, expected) || !tokenEquals(username, this.config.adminUsername)) throw new AppError('用户名或密码错误', 401);
     this.attempts.delete(ip);
