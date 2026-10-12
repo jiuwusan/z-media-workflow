@@ -1,8 +1,9 @@
 import { SetupService } from './service/setup.js';
 import { createApp } from './app.js';
 import { log } from './util/logger.js';
+import { saveRuntimeAddress } from './util/runtime-address.js';
 const setup = new SetupService(), config = setup.config ?? { ...setup.bootstrap }, app = createApp({ config, setup });
-const server = app.listen(config.port, config.host, () => log('server.started', { url: config.publicUrl }));
+const server = app.listen(config.port, config.host, () => { saveRuntimeAddress(server.address()); log('server.started', { url: config.publicUrl }); });
 let closing = false;
 async function shutdown() {
   if (closing) return; closing = true;

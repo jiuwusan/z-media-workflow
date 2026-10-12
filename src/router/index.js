@@ -3,6 +3,8 @@ import { authController } from '../controller/auth.js';
 import { workflowController } from '../controller/workflow.js';
 import { qbittorrentController } from '../controller/qbittorrent.js';
 import { systemController } from '../controller/system.js';
+import { ConfigurationService } from '../service/configuration.js';
+import { configurationController } from '../controller/configuration.js';
 export function createRouter(config, services) {
   const router = new Router();
   const auth = authController(config, services.auth), workflow = workflowController(services.workflow, services.mediaLibrary), qbt = qbittorrentController(services.qbittorrent), system = systemController(config, services);
@@ -10,12 +12,15 @@ export function createRouter(config, services) {
   const webhook = async (ctx, next) => { services.auth.authenticate(ctx, true); await next(); };
   const maintenance = async (ctx, next) => { services.auth.authenticateMaintenance(ctx); await next(); };
   const cleanupAuth = async (ctx, next) => ctx.get('Authorization') ? maintenance(ctx, next) : admin(ctx, next);
+  const configuration = configurationController(services.configuration ?? new ConfigurationService(config));
   router.get('/health', ctx => { ctx.body = { data: { status: 'ok' } }; });
   router.post('/api/auth/login', auth.login);
   router.get('/api/auth/session', admin, auth.session);
   router.post('/api/auth/logout', admin, auth.logout);
   router.get('/api/dashboard', admin, system.dashboard);
   router.post('/api/connections/check', admin, system.check);
+  router.get('/api/config', admin, configuration.get);
+  router.put('/api/config', admin, configuration.save);
   router.get('/api/qbittorrent/completion-notification', admin, qbt.completionNotification);
   router.get('/api/qbittorrent/added-notification', admin, qbt.addedNotification);
   router.put('/api/qbittorrent/added-notification', admin, qbt.setAddedNotification);

@@ -26,6 +26,7 @@ const fields = {
   INGEST_RETRIES: ['ingestRetries', 'number'], MAX_JOBS: ['maxJobs', 'number'], MAX_QUEUE: ['maxQueue', 'number'],
   JOB_TTL_MS: ['jobTtlMs', 'number'], SHUTDOWN_TIMEOUT_MS: ['shutdownMs', 'number']
 };
+export { fields as CONFIG_FIELDS };
 export function loadConfig(filename = CONFIG_FILE) {
   if (!existsSync(filename)) return null;
   return validateConfig(readConfigFile(filename), filename);
