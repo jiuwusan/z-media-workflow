@@ -1,10 +1,10 @@
 <script setup>
 import { ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { DataAnalysis, Connection, Tickets, Film, Setting, SwitchButton, Menu, ArrowRight } from '@element-plus/icons-vue';
+import { DataAnalysis, Connection, Tickets, Film, Delete, Setting, SwitchButton, Menu, ArrowRight } from '@element-plus/icons-vue';
 import { api, setSession } from './api/index.js';
 const route = useRoute(), router = useRouter(), expanded = ref(false);
-const links = [{ path: '/', label: '概览', icon: DataAnalysis }, { path: '/rss', label: 'RSS 订阅', icon: Connection }, { path: '/jobs', label: '工作流任务', icon: Tickets }, { path: '/media', label: '媒体识别', icon: Film }, { path: '/settings', label: '连接与通知', icon: Setting }];
+const links = [{ path: '/', label: '概览', icon: DataAnalysis }, { path: '/rss', label: 'RSS 订阅', icon: Connection }, { path: '/jobs', label: '工作流任务', icon: Tickets }, { path: '/media', label: '媒体识别', icon: Film }, { path: '/torrent-cleanup', label: '种子清理', icon: Delete }, { path: '/settings', label: '连接与通知', icon: Setting }];
 async function logout() { try { await api('/auth/logout', { method: 'POST' }); setSession(null); await router.push('/login'); } catch {} }
 </script>
 <template>

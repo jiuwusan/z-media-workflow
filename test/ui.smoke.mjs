@@ -178,7 +178,9 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByRole('heading', { name: '新增种子文件检查', exact: true }).waitFor();
   await page.getByText('目标名称：Journey.to.the.West.S02E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv', { exact: true }).waitFor();
   await page.getByText('已完成', { exact: true }).first().waitFor(); assert.equal(scan, previousScans);
-  await page.getByRole('link', { name: '连接与通知', exact: true }).click();
+  await page.getByRole('link', { name: '种子清理', exact: true }).click();
+  await page.getByRole('heading', { name: '种子清理', exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/torrent-cleanup');
   const cleanupPanel = page.locator('section').filter({ has: page.getByRole('heading', { name: '文件丢失种子清理', exact: true }) });
   const cleanupSwitch = cleanupPanel.getByRole('switch', { name: '同时删除下载文件', exact: true });
   await cleanupSwitch.waitFor({ state: 'attached' }); assert.equal(await cleanupSwitch.getAttribute('aria-checked'), 'false');
@@ -201,6 +203,9 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByText('将清理所有 missingFiles 种子任务，保留下载文件。继续？', { exact: true }).waitFor();
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/qbittorrent/cleanup-missing-files') && response.request().postData()?.includes('false')), page.getByRole('button', { name: '执行清理', exact: true }).click()]);
   assert.deepEqual(cleanupCalls, ['true', 'false']);
+  await page.getByRole('link', { name: '连接与通知', exact: true }).click();
+  await page.getByRole('heading', { name: '基础配置', exact: true }).waitFor();
+  assert.equal(await page.getByRole('heading', { name: '文件丢失种子清理', exact: true }).count(), 0);
   await page.getByRole('button', { name: '修改配置', exact: true }).click();
   const editor = page.getByRole('dialog', { name: '修改基础配置', exact: true });
   await editor.getByRole('textbox', { name: 'DeepSeek 模型', exact: true }).waitFor();
@@ -222,7 +227,12 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByRole('heading', { name: '已有种子文件检查', exact: true }).waitFor();
   await page.getByText('已检查 1 个分类包含 series 的种子', { exact: true }).waitFor();
   assert.equal(scan, previousScans); assert.equal(changes.filter(c => c === 'rename').length, 1);
-  await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '概览', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '种子清理', exact: true }).click();
+  await page.getByRole('heading', { name: '种子清理', exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 1);
+  await page.screenshot({ path: '.test-artifacts/torrent-cleanup-mobile.png', fullPage: true, animations: 'disabled' });
+  await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '概览', exact: true }).click();
   await page.getByRole('heading', { name: '目标媒体库' }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 1);

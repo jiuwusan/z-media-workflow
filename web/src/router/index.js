@@ -8,6 +8,7 @@ const router = createRouter({ history: createWebHistory(), routes: [
   { path: '/jobs', component: () => import('../views/Jobs.vue'), meta: { title: '工作流任务', subtitle: '跟踪扫描、识别和媒体信息确认的每一步。' } },
   { path: '/jobs/:id', component: () => import('../views/JobDetail.vue'), meta: { title: '任务详情', subtitle: '查看处理结果，并确认需要人工判断的候选。' } },
   { path: '/media', component: () => import('../views/Media.vue'), meta: { title: '媒体识别', subtitle: '为尚未识别的电视剧和电影补齐媒体信息。' } },
+  { path: '/torrent-cleanup', component: () => import('../views/TorrentCleanup.vue'), meta: { title: '种子清理', subtitle: '预览并清理文件丢失的种子，设置是否同时删除下载文件。' } },
   { path: '/settings', component: () => import('../views/Settings.vue'), meta: { title: '连接与通知', subtitle: '检查服务连接，配置下载完成通知。' } },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ] });

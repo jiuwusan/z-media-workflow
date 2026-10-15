@@ -78,7 +78,8 @@ GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker com
 - 工作流任务：扫描状态、每项识别结果、失败重试。
 - 媒体识别：分页查看未识别条目，预览或自动识别选中条目/目标库。
 - 任务详情：查看名称提取和 Jellyfin 候选，人工确认，或修改名称/年份后重新搜索。
-- 连接与通知：基础配置编辑、连接检查、目录映射、回调命令和种子清理设置。
+- 种子清理：预览和清理文件丢失种子，保存是否同时删除下载文件的设置。
+- 连接与通知：基础配置编辑、连接检查、目录映射和回调命令。
 
 初始化完成后，可在“连接与通知 → 基础配置 → 修改配置”中编辑服务连接、管理员账号、面板/监听地址、认证开关、目录映射和运行参数。已保存的密码和 API 密钥不会回传到页面，输入框留空表示保留原值；修改管理员密码需要再次确认，至少 12 位。配置保存到同一 `data/config.json`，基础配置需重启服务生效，页面会持续提示尚未生效的改动；重启后使用新账号登录。连接检查使用当前运行配置，保存后尚未重启时仍检查原连接。清理文件删除开关继续即时生效。
 
@@ -213,7 +214,7 @@ node /opt/z-media-workflow/scripts/notify-completed.mjs "%I"
 
 ## 外部 crontab 清理文件丢失的种子
 
-`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在“连接与通知”页面的“文件丢失种子清理”面板中，通过“同时删除下载文件”开关选择是否删除文件，并点击“保存清理设置”。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，集中保存在 `data/config.json`，重启后保留；Compose 使用持久卷中的 `/app/data/config.json`。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
+`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在左侧“种子清理”页面的“文件丢失种子清理”面板中，通过“同时删除下载文件”开关选择是否删除文件，并点击“保存清理设置”。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，集中保存在 `data/config.json`，重启后保留；Compose 使用持久卷中的 `/app/data/config.json`。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
 
 清理配置是同一 `config.json` 中的 `torrentCleanup` 字段，下面只展示这部分。页面保存时只更新 `torrentCleanup.deleteFiles`，保留服务地址、令牌和其他配置项。手工编辑后重启服务生效。媒体游标属于运行数据，仍保存到 `media-cursors.json`。
 

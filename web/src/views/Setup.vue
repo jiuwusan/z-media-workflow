@@ -43,7 +43,7 @@ async function save() {
           <el-form-item label="面板访问地址"><el-input v-model="form.PUBLIC_URL" aria-label="面板访问地址" /></el-form-item>
           <el-form-item label="下载完成回调地址（可选）"><el-input v-model="form.WORKFLOW_CALLBACK_URL" aria-label="下载完成回调地址" placeholder="留空时根据面板地址生成" /></el-form-item>
           <el-form-item label="下载回调认证"><el-switch v-model="form.WEBHOOK_AUTH_ENABLED" aria-label="下载回调认证" /></el-form-item>
-          <p class="muted">回调令牌会自动生成并保存。清理下载文件默认关闭，可在登录后的“连接与通知”中设置。</p>
+          <p class="muted">回调令牌会自动生成并保存。清理下载文件默认关闭，可在登录后的“种子清理”中设置。</p>
           <p class="muted">保存后即可登录。后续配置可在本地配置文件中修改。</p>
         </div>
         <div class="setup-actions"><el-button v-if="step > 0" @click="step--; error = ''">上一步</el-button><el-button v-if="step < 2" type="primary" native-type="submit">下一步</el-button><el-button v-else type="primary" native-type="submit" :loading="busy" :disabled="!csrf">保存并进入登录</el-button></div>
