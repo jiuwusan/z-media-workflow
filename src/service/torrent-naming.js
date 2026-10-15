@@ -2,7 +2,7 @@ import { episodeFilename, renamedEpisodePath } from '../util/torrent-naming.js';
 import { AppError } from '../util/error.js';
 import { sleep } from '../util/http.js';
 import { redact } from '../util/logger.js';
-const seriesCategory = torrent => typeof torrent.category === 'string' && /series/i.test(torrent.category);
+import { isSeriesCategory } from '../util/torrent-categories.js';
 
 export class TorrentNamingService {
   constructor(config, qbittorrent, deepseek, secrets = []) { this.config = config; this.qbt = qbittorrent; this.ai = deepseek; this.secrets = secrets; }
@@ -21,18 +21,18 @@ export class TorrentNamingService {
     update(job, '读取已有种子');
     const torrents = await this.qbt.torrents();
     if (!Array.isArray(torrents)) throw new AppError('qBittorrent 种子列表无效', 502);
-    const targets = torrents.filter(seriesCategory);
+    const targets = torrents.filter(torrent => isSeriesCategory(torrent.category, this.config));
     for (const torrent of targets) {
       try { await this.checkTorrent(job, torrent.hash, update); }
       catch (error) { job.items.push({ itemId: `${torrent.hash}:torrent`, torrentHash: torrent.hash, torrentName: torrent.name, type: 'File', originalName: torrent.name ?? torrent.hash, path: '', status: 'failed', error: redact(error.message, this.secrets) }); }
     }
-    job.message = targets.length ? `已检查 ${targets.length} 个分类包含 series 的种子` : '没有分类包含 series 的已有种子';
+    job.message = targets.length ? `已检查 ${targets.length} 个已配置剧集分类的种子` : '没有属于已配置剧集分类的已有种子';
   }
   async checkTorrent(job, hash, update) {
     update(job, '检查种子分类');
     const torrent = await this.qbt.torrent(hash);
-    if (!seriesCategory(torrent)) {
-      if (!job.input.checkExisting) job.message = '种子分类不包含 series，已跳过文件检查';
+    if (!isSeriesCategory(torrent.category, this.config)) {
+      if (!job.input.checkExisting) job.message = '种子分类不属于已配置的剧集分类，已跳过文件检查';
       return;
     }
     update(job, '等待种子文件列表');
@@ -53,7 +53,7 @@ export class TorrentNamingService {
         const useDefault = decision.confidence !== 'high' || decision.season == null;
         if (useDefault) entry.message = 'AI 无法可靠确定季号，默认使用 S01';
         entry.newPath = renamedEpisodePath(parsed, useDefault ? { season: 1, removeTitleSuffix: null } : decision);
-        if (!seriesCategory(await this.qbt.torrent(hash))) { entry.status = 'skipped'; entry.message = '种子分类已不包含 series，已停止重命名'; continue; }
+        if (!isSeriesCategory((await this.qbt.torrent(hash)).category, this.config)) { entry.status = 'skipped'; entry.message = '种子分类已不属于已配置的剧集分类，已停止重命名'; continue; }
         const current = await this.qbt.files(hash), actual = current.find(f => f.index === file.index);
         if (actual?.name === entry.newPath) { entry.status = 'completed'; continue; }
         if (actual?.name !== file.name) throw new AppError('文件名在检查期间发生变化，请重试', 409);

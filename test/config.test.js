@@ -6,6 +6,12 @@ import path from 'node:path';
 import { loadConfig, validateConfig } from '../src/config/index.js';
 import { CleanupSettingsStore } from '../src/util/cleanup-settings.js';
 const credentials = { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'test-password', QBT_API_KEY: 'test-qbt', JELLYFIN_API_KEY: 'test-jelly', DEEPSEEK_API_KEY: 'test-deep', WEBHOOK_AUTH_ENABLED: false };
+test('series categories are a validated JSON list with no preselected categories', () => {
+  assert.deepEqual(validateConfig(credentials).seriesCategories, []);
+  assert.deepEqual(validateConfig({ ...credentials, SERIES_CATEGORIES: ['电视剧', 'TV'] }).seriesCategories, ['电视剧', 'TV']);
+  assert.deepEqual(validateConfig({ ...credentials, SERIES_CATEGORIES: [] }).seriesCategories, []);
+  for (const value of ['series', null, [1], [''], [' TV ']]) assert.throws(() => validateConfig({ ...credentials, SERIES_CATEGORIES: value }), /SERIES_CATEGORIES/);
+});
 function fixture(t) {
   const root = mkdtempSync(path.join(tmpdir(), 'workflow-config-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

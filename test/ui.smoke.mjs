@@ -61,7 +61,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
     if (route === '/qbt/api/v2/app/preferences') return json({ ...notification, mail_notification_password: 'secret-mail' });
     if (route === '/qbt/api/v2/app/setPreferences') { const update = JSON.parse(new URLSearchParams(raw).get('json')); const added = Object.hasOwn(update, 'autorun_on_torrent_added_enabled'); assert.deepEqual(Object.keys(update).sort(), added ? ['autorun_on_torrent_added_enabled', 'autorun_on_torrent_added_program'] : ['autorun_enabled', 'autorun_program']); Object.assign(notification, update); changes.push(added ? 'added-notification' : 'notification'); res.end(''); return; }
     if (route === '/qbt/api/v2/torrents/info') {
-      const torrents = [{ hash: 'a'.repeat(40), name: 'Journey to the West II', category: 'series', state: 'downloading', progress: 0.1 }, ...(missingSeed ? [missingSeed] : [])];
+      const torrents = [{ hash: 'a'.repeat(40), name: 'Journey to the West II', category: 'series', state: 'downloading', progress: 0.1, added_on: 100 }, { hash: 'c'.repeat(40), name: 'Newest series', category: 'series', state: 'pausedDL', added_on: 300 }, { hash: 'd'.repeat(40), name: 'Movie category', category: 'movies', added_on: 200 }, ...(missingSeed ? [missingSeed] : [])];
       return json(url.searchParams.has('hashes') ? torrents.filter(t => t.hash === url.searchParams.get('hashes')) : torrents);
     }
     if (route === '/qbt/api/v2/torrents/delete') { const fields = new URLSearchParams(raw); assert.equal(fields.get('hashes'), missingSeed.hash); cleanupCalls.push(fields.get('deleteFiles')); missingSeed = null; res.end(''); return; }
@@ -93,7 +93,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   const base = `http://127.0.0.1:${upstream.address().port}`;
   const cursorDir = await mkdtemp(path.join(tmpdir(), 'workflow-ui-'));
   const filename = path.join(cursorDir, 'config.json');
-  writeConfigFile(filename, { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'browser-test-password-123456', WEBHOOK_AUTH_ENABLED: false, QBT_URL: `${base}/qbt/`, QBT_API_KEY: 'mock-qbt', JELLYFIN_URL: `${base}/jelly/`, JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_URL: `${base}/deep/`, DEEPSEEK_API_KEY: 'mock-deep', POLL_INTERVAL_MS: 5, SCAN_TIMEOUT_MS: 1000, VERIFY_TIMEOUT_MS: 1000, MEDIA_CURSOR_FILE: path.join(cursorDir, 'cursors.json') });
+  writeConfigFile(filename, { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'browser-test-password-123456', SERIES_CATEGORIES: ['series'], WEBHOOK_AUTH_ENABLED: false, QBT_URL: `${base}/qbt/`, QBT_API_KEY: 'mock-qbt', JELLYFIN_URL: `${base}/jelly/`, JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_URL: `${base}/deep/`, DEEPSEEK_API_KEY: 'mock-deep', POLL_INTERVAL_MS: 5, SCAN_TIMEOUT_MS: 1000, VERIFY_TIMEOUT_MS: 1000, MEDIA_CURSOR_FILE: path.join(cursorDir, 'cursors.json') });
   const config = loadConfig(filename);
   config.mediaCursorFile = path.join(cursorDir, 'cursors.json');
   config.configFile = path.join(cursorDir, 'config.json');
@@ -257,9 +257,12 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await editor.getByRole('textbox', { name: 'DeepSeek 模型', exact: true }).waitFor();
   assert.equal(await editor.getByRole('textbox', { name: 'qBittorrent API 密钥', exact: true }).inputValue(), '');
   await editor.getByRole('textbox', { name: 'DeepSeek 模型', exact: true }).fill('new-test-model');
+  await editor.getByRole('tab', { name: '回调与目录', exact: true }).click();
+  assert.equal(await editor.getByRole('combobox', { name: '剧集分类', exact: true }).count(), 0);
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/config') && response.request().method() === 'PUT'), editor.getByRole('button', { name: '保存基础配置', exact: true }).click()]);
   await page.getByText('存在已保存但尚未生效的配置，请重启服务。', { exact: true }).waitFor();
   assert.equal(loadConfig(filename).deepseekModel, 'new-test-model'); assert.equal(config.deepseekModel, 'deepseek-flash');
+  assert.deepEqual(loadConfig(filename).seriesCategories, ['series']);
   assert.equal(loadConfig(filename).qbtKey, 'mock-qbt'); assert.equal(new CleanupSettingsStore(filename).get().deleteFiles, false);
   await page.reload();
   await page.getByText('存在已保存但尚未生效的配置，请重启服务。', { exact: true }).waitFor();
@@ -274,11 +277,51 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await editor.screenshot({ path: '.test-artifacts/configuration-mobile.png', animations: 'disabled' });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole('link', { name: '种子通知', exact: true }).click();
-  await page.getByRole('button', { name: '检查已有种子', exact: true }).click();
-  await page.getByRole('heading', { name: '已有种子文件检查', exact: true }).waitFor();
-  await page.getByText('已检查 1 个分类包含 series 的种子', { exact: true }).waitFor();
+  await page.getByRole('heading', { name: '新增种子通知', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '检查已有种子', exact: true }).count(), 0);
+  const renamesBeforeNamingPage = changes.filter(c => c === 'rename').length;
+  await page.getByRole('navigation').getByRole('link', { name: '命名检查', exact: true }).click();
+  await page.getByRole('heading', { name: '种子文件命名规范检查', exact: true, level: 1 }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/torrent-naming');
+  await page.reload();
+  await page.getByRole('heading', { name: '种子文件命名规范检查', exact: true, level: 1 }).waitFor();
+  const torrents = page.getByRole('list', { name: '种子列表' }).getByRole('listitem');
+  await torrents.filter({ hasText: 'Newest series' }).waitFor();
+  assert.deepEqual(await torrents.locator('h3').allTextContents(), ['Newest series', 'Movie category', 'Journey to the West II']);
+  assert.equal(await torrents.filter({ hasText: 'Movie category' }).getByRole('button', { name: '检查此种子' }).isDisabled(), true);
+  const categoryInput = page.getByRole('combobox', { name: '剧集分类', exact: true });
+  await categoryInput.fill('不存在的分类'); await page.getByText('无匹配数据', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('option', { name: '不存在的分类', exact: true }).count(), 0);
+  await categoryInput.fill('movies'); await page.getByRole('option', { name: 'movies', exact: true }).click(); await categoryInput.press('Escape');
+  assert.equal(await torrents.filter({ hasText: 'Journey to the West II' }).getByRole('button', { name: '检查此种子' }).isDisabled(), true);
+  await page.getByRole('heading', { name: '选择种子', exact: true }).click();
+  await page.getByRole('button', { name: '保存分类', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.torrent-row .el-button')?.disabled);
+  assert.deepEqual(config.seriesCategories, ['series', 'movies']);
+  assert.deepEqual(loadConfig(filename).seriesCategories, ['series', 'movies']);
+  await page.reload(); await categoryInput.waitFor();
+  await categoryInput.fill('movies'); await page.getByRole('option', { name: 'movies', exact: true }).click(); await categoryInput.press('Escape');
+  await page.getByRole('heading', { name: '选择种子', exact: true }).click();
+  await page.getByRole('button', { name: '保存分类', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.torrent-row .el-button')?.disabled);
+  assert.deepEqual(config.seriesCategories, ['series']);
+  assert.equal(await page.getByRole('button', { name: '检查已有种子', exact: true }).count(), 0);
+  assert.equal(changes.filter(c => c === 'rename').length, renamesBeforeNamingPage);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: '.test-artifacts/torrent-naming-mobile.png', fullPage: true, animations: 'disabled' });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  const [checkResponse] = await Promise.all([
+    page.waitForResponse(response => response.url().endsWith('/api/workflows/check-torrents') && response.request().method() === 'POST'),
+    torrents.filter({ hasText: 'Journey to the West II' }).getByRole('button', { name: '检查此种子' }).click()
+  ]);
+  assert.deepEqual(checkResponse.request().postDataJSON(), { hash: 'a'.repeat(40) });
+  const checkedJob = (await checkResponse.json()).data;
+  assert.equal(checkedJob.input.hash, 'a'.repeat(40)); assert.equal(checkedJob.input.checkExisting, undefined);
+  assert.notEqual(checkedJob.id, addedJob.id);
+  await page.getByRole('heading', { name: '新增种子文件检查', exact: true }).waitFor();
+  await page.getByText('没有需要补充季号的影视文件', { exact: true }).waitFor();
   assert.equal(scan, previousScans); assert.equal(changes.filter(c => c === 'rename').length, 1);
-  await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '下载规则', exact: true }).click();
+  await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '下载规则', exact: true }).click();
   await page.getByRole('heading', { name: '自动下载规则', exact: true, level: 1 }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 1);

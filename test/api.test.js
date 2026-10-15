@@ -2,7 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
 import { validateConfig } from '../src/config/index.js';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { writeConfigFile } from '../src/util/config-file.js';
 const admin = 'admin-token-at-least-24-characters', webhook = 'webhook-token-at-least-24-characters';
+test('naming settings require admin and CSRF, save only queried categories and apply immediately', async t => {
+  const { req, login, config, services } = await setup(t);
+  const root = mkdtempSync(path.join(tmpdir(), 'naming-settings-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  config.configFile = path.join(root, 'config.json'); config.seriesCategories = [];
+  const original = { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'test-password-123', QBT_API_KEY: 'qbt', JELLYFIN_API_KEY: 'jelly', DEEPSEEK_API_KEY: 'ai', torrentCleanup: { deleteFiles: true } };
+  writeConfigFile(config.configFile, original);
+  services.qbittorrent.categories = async () => ({ series: {}, 电视剧: {} });
+  const route = '/api/qbittorrent/naming-settings';
+  assert.equal((await req(route)).status, 401);
+  const headers = await login();
+  assert.deepEqual((await (await req(route, { headers })).json()).data.seriesCategories, []);
+  assert.equal((await req(route, { method: 'PUT', headers: { Cookie: headers.Cookie }, body: '{}' })).status, 403);
+  for (const body of [{}, { seriesCategories: 'series' }, { seriesCategories: ['missing'] }, { seriesCategories: ['series'], extra: true }]) assert.equal((await req(route, { method: 'PUT', headers, body: JSON.stringify(body) })).status, 400);
+  const saved = await req(route, { method: 'PUT', headers, body: JSON.stringify({ seriesCategories: ['电视剧'] }) });
+  assert.equal(saved.status, 200); assert.deepEqual(config.seriesCategories, ['电视剧']);
+  assert.deepEqual(JSON.parse(readFileSync(config.configFile, 'utf8')), { ...original, SERIES_CATEGORIES: ['电视剧'] });
+  assert.equal((await req(route, { method: 'PUT', headers, body: JSON.stringify({ seriesCategories: [] }) })).status, 200);
+  assert.deepEqual(config.seriesCategories, []);
+});
 
 test('notification context requires admin login and works independently of media library connections', async t => {
   const { req, config, services, login } = await setup(t);
@@ -72,9 +95,35 @@ test('existing torrent checks require admin login and CSRF, and cannot override 
   assert.equal((await req(route, { method: 'POST' })).status, 401);
   const headers = await login();
   assert.equal((await req(route, { method: 'POST', headers: { Cookie: headers.Cookie } })).status, 403);
-  const response = await req(route, { method: 'POST', headers, body: '{}' });
-  assert.equal(response.status, 202); assert.deepEqual((await response.json()).data.input, { event: 'added', checkExisting: true });
+  const response = await req(route, { method: 'POST', headers, body: JSON.stringify({ hash: 'A'.repeat(40) }) });
+  assert.equal(response.status, 202); assert.deepEqual((await response.json()).data.input, { hash: 'a'.repeat(40), event: 'added' });
+  for (const body of ['{}', '[]', '{"hash":"invalid"}', JSON.stringify({ hash: 'a'.repeat(40), checkExisting: true })]) assert.equal((await req(route, { method: 'POST', headers, body })).status, 400);
   assert.equal((await req(route, { method: 'POST', headers, body: '{"category":"movies"}' })).status, 400);
+});
+
+test('torrent selection lists newest additions first, paginates and omits private upstream fields', async t => {
+  const { req, login, services, config } = await setup(t);
+  config.seriesCategories = ['series', 'super-series'];
+  services.qbittorrent.torrents = async () => [
+    { hash: 'a'.repeat(40), name: 'Old series', category: 'SUPER-SERIES', added_on: 100, magnet_uri: 'private' },
+    { hash: 'b'.repeat(40), name: 'Newest movie', category: 'movies', added_on: 300 },
+    { hash: 'c'.repeat(40), name: 'New series', category: 'series', added_on: 200 }
+  ];
+  const route = '/api/qbittorrent/torrents';
+  assert.equal((await req(route)).status, 401);
+  const headers = await login();
+  const response = await req(`${route}?page=1&pageSize=2`, { headers });
+  assert.equal(response.status, 200);
+  const data = (await response.json()).data;
+  assert.equal(data.total, 3); assert.deepEqual(data.items.map(item => item.name), ['Newest movie', 'New series']);
+  assert.deepEqual(data.items.map(item => item.eligible), [false, true]);
+  const second = (await (await req(`${route}?page=2&pageSize=2`, { headers })).json()).data;
+  assert.equal(second.items[0].name, 'Old series'); assert.equal(second.items[0].eligible, true);
+  assert.equal(JSON.stringify(second).includes('private'), false);
+  config.seriesCategories = ['movies'];
+  const configured = (await (await req(route, { headers })).json()).data;
+  assert.deepEqual(configured.seriesCategories, ['movies']);
+  assert.deepEqual(configured.items.map(item => item.eligible), [true, false, false]);
 });
 
 test('added callback validates hashes and uses webhook authentication', async t => {

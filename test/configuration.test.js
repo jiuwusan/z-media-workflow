@@ -15,6 +15,14 @@ function fixture(t) {
   const config = loadConfig(file), service = new ConfigurationService(config);
   return { file, config, service };
 }
+test('global configuration excludes naming settings and preserves them when saving other fields', t => {
+  const { service, file } = fixture(t);
+  assert.equal(service.get().values.SERIES_CATEGORIES, undefined);
+  assert.throws(() => service.save({ values: { SERIES_CATEGORIES: ['tv'] }, revision: service.get().revision }), /不支持/);
+  writeConfigFile(file, { ...initial, SERIES_CATEGORIES: ['电视剧'] });
+  service.save({ values: { DEEPSEEK_MODEL: 'new-model' }, revision: service.get().revision });
+  assert.deepEqual(loadConfig(file).seriesCategories, ['电视剧']);
+});
 test('configuration reads mask secrets and report pending restart without exposing values', t => {
   const { service, file } = fixture(t);
   const view = service.get();

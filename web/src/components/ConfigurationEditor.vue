@@ -41,6 +41,7 @@ async function save() {
 }
 function bounds(key) { return { PORT: [1, 65535], INGEST_RETRIES: [0, 5], MAX_JOBS: [10, 10000], MAX_QUEUE: [1, 1000] }[key] ?? [1, 100000000]; }
 onMounted(load);
+
 onBeforeUnmount(clearSecrets);
 </script>
 <template>

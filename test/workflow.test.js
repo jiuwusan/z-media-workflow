@@ -127,13 +127,13 @@ test('added callback checks files without Jellyfin scanning and cannot deduplica
   assert.equal((await done(workflow, completion)).status, 'completed'); assert.deepEqual(events, ['scan', 'apply']);
 });
 
-test('existing torrent button deduplicates active batches but can check again after completion', async () => {
+test('manual torrent check deduplicates active hash but can check again after completion', async () => {
   const { workflow, deps } = fixture();
   deps.torrentNaming = { run: async () => { await new Promise(r => setTimeout(r, 10)); } };
-  const input = { event: 'added', checkExisting: true }, first = workflow.enqueue(input);
-  assert.equal(workflow.enqueue(input).id, first.id);
+  const input = { event: 'added', hash: 'a'.repeat(40) }, options = { recheck: true }, first = workflow.enqueue(input, [], options);
+  assert.equal(workflow.enqueue(input, [], options).id, first.id);
   await done(workflow, first);
-  const second = workflow.enqueue(input); assert.notEqual(second.id, first.id);
+  const second = workflow.enqueue(input, [], options); assert.notEqual(second.id, first.id);
   assert.equal((await done(workflow, second)).status, 'completed');
 });
 test('dry run does not write metadata and can later confirm stored candidate', async () => {

@@ -4,8 +4,9 @@ export function workflowController(workflow, mediaLibrary) {
   const accepted = (ctx, job) => { ctx.status = 202; ctx.body = { data: job }; };
   return {
     checkTorrents(ctx) {
-      if (Object.keys(ctx.request.body ?? {}).length) throw new AppError('已有种子检查无需参数，仅检查分类包含 series 的种子');
-      accepted(ctx, workflow.enqueue({ event: 'added', checkExisting: true }));
+      const body = ctx.request.body ?? {};
+      if (typeof body.hash !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(body.hash) || Object.keys(body).some(key => key !== 'hash')) throw new AppError('请选择一个种子，仅接受有效的 torrent hash');
+      accepted(ctx, workflow.enqueue({ hash: body.hash.toLowerCase(), event: 'added' }, [], { recheck: true }));
     },
     added(ctx) {
       const body = ctx.request.body ?? {};

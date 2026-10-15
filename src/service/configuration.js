@@ -19,7 +19,7 @@ export class ConfigurationService {
       if (secrets.has(key)) secretFields[key] = Boolean(value);
       else values[key] = value;
     }
-    const restartRequired = Object.values(CONFIG_FIELDS).some(([field]) => fieldValue(saved, field) !== fieldValue(this.runtime, field));
+    const restartRequired = Object.values(CONFIG_FIELDS).some(([field]) => JSON.stringify(fieldValue(saved, field)) !== JSON.stringify(fieldValue(this.runtime, field)));
     return { values, secretFields, revision: revision(document), restartRequired };
   }
   get() { return this.view(this.read()); }

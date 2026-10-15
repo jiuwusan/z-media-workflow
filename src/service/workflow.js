@@ -31,7 +31,7 @@ export class WorkflowService {
       if (existing) return this.get(existing.id);
     }
     if (input.hash && !recovery.length) {
-      const existing = [...this.jobs.values()].find(j => j.input.hash === input.hash && (j.input.event ?? 'completed') === (input.event ?? 'completed') && j.status !== 'failed');
+      const existing = [...this.jobs.values()].find(j => j.input.hash === input.hash && (j.input.event ?? 'completed') === (input.event ?? 'completed') && j.status !== 'failed' && (!options.recheck || ['queued', 'running'].includes(j.status)));
       if (existing) return this.get(existing.id);
     }
     this.ensureCapacity();

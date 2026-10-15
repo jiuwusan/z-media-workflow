@@ -8,6 +8,7 @@ export const DEFAULT_CONFIG = {
   QBT_URL: 'http://localhost:8080/', JELLYFIN_URL: 'http://localhost:8096/', DEEPSEEK_URL: 'https://api.deepseek.com/', DEEPSEEK_MODEL: 'deepseek-flash',
   WORKFLOW_API_TOKEN: '', WEBHOOK_AUTH_ENABLED: false, SESSION_TTL_MS: 28800000,
   QBT_PATH_PREFIX: '', JELLYFIN_PATH_PREFIX: '', MEDIA_CURSOR_FILE: 'data/media-cursors.json',
+  SERIES_CATEGORIES: [],
   REQUEST_TIMEOUT_MS: 15000, POLL_INTERVAL_MS: 2000, SCAN_TIMEOUT_MS: 600000, VERIFY_TIMEOUT_MS: 120000,
   TORRENT_FILES_TIMEOUT_MS: 120000, INGEST_RETRIES: 2, MAX_JOBS: 200, MAX_QUEUE: 30, JOB_TTL_MS: 86400000, SHUTDOWN_TIMEOUT_MS: 30000,
   torrentCleanup: { deleteFiles: false }
@@ -35,6 +36,8 @@ export function validateConfig(document, filename = CONFIG_FILE) {
   if (!document || typeof document !== 'object' || Array.isArray(document)) throw new AppError('配置必须是 JSON 对象');
   const values = { ...DEFAULT_CONFIG, ...document };
   const config = { configFile: path.resolve(filename), pathMapping: {} };
+  if (!Array.isArray(values.SERIES_CATEGORIES) || values.SERIES_CATEGORIES.some(value => typeof value !== 'string' || !value.trim() || value !== value.trim() || /[\r\n\0]/.test(value))) throw new AppError('SERIES_CATEGORIES 必须是分类名称的 JSON 数组');
+  config.seriesCategories = [...values.SERIES_CATEGORIES];
   for (const [key, [field, type]] of Object.entries(fields)) {
     if (values[key] === undefined) continue;
     if (typeof values[key] !== type) throw new AppError(`${key} 必须是 JSON ${type}`);

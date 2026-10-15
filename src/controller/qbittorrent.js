@@ -1,8 +1,34 @@
-import { text, validFeedUrl } from '../util/validation.js';
+import { text, validFeedUrl, pagination } from '../util/validation.js';
 import { AppError } from '../util/error.js';
 import { log } from '../util/logger.js';
-export function qbittorrentController(qbt) {
+import { isSeriesCategory } from '../util/torrent-categories.js';
+import { readConfigFile, writeConfigFile } from '../util/config-file.js';
+import { validateConfig } from '../config/index.js';
+export function qbittorrentController(qbt, config) {
   return {
+    async namingSettings(ctx) { ctx.body = { data: { seriesCategories: [...config.seriesCategories] } }; },
+    async saveNamingSettings(ctx) {
+      const body = ctx.request.body;
+      if (!body || Array.isArray(body) || Object.keys(body).some(key => key !== 'seriesCategories') || !Array.isArray(body.seriesCategories) || body.seriesCategories.some(value => typeof value !== 'string' || !value.trim())) throw new AppError('只接受剧集分类列表 seriesCategories');
+      const selected = [...new Set(body.seriesCategories)];
+      if (selected.length) {
+        const available = await qbt.categories();
+        if (selected.some(name => !Object.hasOwn(available, name))) throw new AppError('请选择 qBittorrent 已有分类，请刷新分类后重试');
+      }
+      const document = readConfigFile(config.configFile), next = { ...document, SERIES_CATEGORIES: selected };
+      validateConfig(next, config.configFile);
+      writeConfigFile(config.configFile, next);
+      config.seriesCategories = selected;
+      ctx.body = { data: { seriesCategories: [...selected] } };
+    },
+    async torrents(ctx) {
+      const { page, pageSize } = pagination(ctx.query);
+      const torrents = await qbt.torrents();
+      if (!Array.isArray(torrents)) throw new AppError('qBittorrent 种子列表无效', 502);
+      const items = torrents.map(torrent => ({ hash: torrent.hash, name: torrent.name, category: torrent.category ?? '', state: torrent.state, addedOn: Number(torrent.added_on) || 0, eligible: isSeriesCategory(torrent.category, config) }));
+      items.sort((a, b) => b.addedOn - a.addedOn || String(a.hash).localeCompare(String(b.hash)));
+      ctx.body = { data: { items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize, seriesCategories: config.seriesCategories } };
+    },
     async cleanupSettings(ctx) { ctx.body = { data: qbt.cleanupSettings() }; },
     async saveCleanupSettings(ctx) {
       const body = ctx.request.body;

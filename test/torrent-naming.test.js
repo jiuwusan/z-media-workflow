@@ -32,7 +32,7 @@ function fixture(overrides = {}) {
   let files = [{ index: 0, name: source }, { index: 1, name: 'Show.S01E02.mkv' }], calls = 0;
   const qbt = { torrent: async () => ({ name: 'Journey to the West II', category: 'series' }), files: async () => structuredClone(files), renameFile: async (hash, oldPath, newPath) => { calls++; files.find(f => f.name === oldPath).name = newPath; } };
   const ai = { identifySeason: async () => decision };
-  const service = new TorrentNamingService({ pollMs: 1, torrentFilesTimeoutMs: 50, requestTimeoutMs: 30 }, qbt, ai, []);
+  const service = new TorrentNamingService({ seriesCategories: ['series', 'pure-series', 'super-series'], pollMs: 1, torrentFilesTimeoutMs: 50, requestTimeoutMs: 30 }, qbt, ai, []);
   Object.assign(qbt, overrides);
   const job = { input: { hash: 'a'.repeat(40), event: 'added' }, items: [] };
   return { service, job, qbt, ai, calls: () => calls, setFiles: value => { files = value; } };
@@ -41,6 +41,21 @@ test('added check renames via qBittorrent and repeated checks are idempotent', a
   const f = fixture(); await f.service.run(f.job, () => {});
   assert.equal(f.calls(), 1); assert.equal(f.job.items[0].newPath, target); assert.equal(f.job.items[0].status, 'completed');
   f.job.items = []; await f.service.run(f.job, () => {}); assert.equal(f.calls(), 1);
+});
+test('configured series categories use exact case-insensitive names for checks and rename revalidation', async () => {
+  const f = fixture({ torrent: async () => ({ name: 'Show', category: 'TV' }) });
+  f.service.config.seriesCategories = ['tv', '电视剧'];
+  await f.service.run(f.job, () => {}); assert.equal(f.calls(), 1);
+  const excluded = fixture(); excluded.service.config.seriesCategories = ['电视剧'];
+  await excluded.service.run(excluded.job, () => {}); assert.equal(excluded.calls(), 0);
+  const substring = fixture({ torrent: async () => ({ category: 'not-series' }) });
+  await substring.service.run(substring.job, () => {}); assert.equal(substring.calls(), 0);
+  const empty = fixture(); empty.service.config.seriesCategories = [];
+  await empty.service.run(empty.job, () => {}); assert.equal(empty.calls(), 0);
+  let reads = 0;
+  const changed = fixture({ torrent: async () => ({ category: ++reads === 1 ? 'TV' : 'series' }) });
+  changed.service.config.seriesCategories = ['TV'];
+  await changed.service.run(changed.job, () => {}); assert.equal(changed.calls(), 0); assert.equal(changed.job.items[0].status, 'skipped');
 });
 test('empty magnet file list waits for metadata rather than claiming completion', async () => {
   const f = fixture(); const files = f.qbt.files; let reads = 0;
