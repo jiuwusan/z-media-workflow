@@ -4,6 +4,20 @@ import { createApp } from '../src/app.js';
 import { validateConfig } from '../src/config/index.js';
 const admin = 'admin-token-at-least-24-characters', webhook = 'webhook-token-at-least-24-characters';
 
+test('notification context requires admin login and works independently of media library connections', async t => {
+  const { req, config, services, login } = await setup(t);
+  services.mediaLibrary.libraries = async () => { throw new Error('media library unavailable'); };
+  assert.equal((await req('/api/notifications/context')).status, 401);
+  assert.equal((await req('/api/notifications/context', { headers: { Authorization: `Bearer ${webhook}` } })).status, 401);
+  const headers = await login();
+  const response = await req('/api/notifications/context', { headers }); assert.equal(response.status, 200);
+  const data = (await response.json()).data;
+  assert.equal(data.callbackUrl, config.callbackUrl ?? `${config.publicUrl.replace(/\/$/, '')}/api/webhooks/qbittorrent/completed`);
+  assert.ok(data.addedCallbackUrl.endsWith('/added'));
+  assert.equal(data.webhookAuthRequired, config.webhookAuthRequired !== false);
+  assert.equal(JSON.stringify(data).includes(webhook), false);
+});
+
 test('missing-file cleanup requires bearer authentication even when webhook auth is disabled', async t => {
   const { req, config, services } = await setup(t);
   config.webhookAuthRequired = false;

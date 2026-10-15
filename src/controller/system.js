@@ -1,10 +1,15 @@
 import { redact } from '../util/logger.js';
+function notificationContext(config) {
+  const callbackUrl = config.callbackUrl ?? `${config.publicUrl.replace(/\/$/, '')}/api/webhooks/qbittorrent/completed`;
+  return { callbackUrl, addedCallbackUrl: new URL('added', callbackUrl).href, webhookAuthRequired: config.webhookAuthRequired !== false };
+}
 export function systemController(config, services) {
   return {
+    async notifications(ctx) { ctx.body = { data: notificationContext(config) }; },
     async dashboard(ctx) {
       ctx.body = { data: { ...services.workflow.summary(), libraries: await services.mediaLibrary.libraries(), connections: {
         qbittorrent: { url: config.qbtUrl, configured: Boolean(config.qbtKey) }, jellyfin: { url: config.jellyfinUrl, configured: Boolean(config.jellyfinKey) }, deepseek: { url: config.deepseekUrl, configured: Boolean(config.deepseekKey), model: config.deepseekModel }
-      }, pathMapping: config.pathMapping, callbackUrl: config.callbackUrl ?? `${config.publicUrl.replace(/\/$/, '')}/api/webhooks/qbittorrent/completed`, addedCallbackUrl: new URL('added', config.callbackUrl ?? `${config.publicUrl.replace(/\/$/, '')}/api/webhooks/qbittorrent/completed`).href, webhookAuthRequired: config.webhookAuthRequired !== false } };
+      }, pathMapping: config.pathMapping, ...notificationContext(config) } };
     },
     async check(ctx) {
       const calls = { qbittorrent: () => services.qbittorrent.version(), jellyfin: async () => ({ version: (await services.jellyfin.info()).Version }), deepseek: async () => ({ models: (await services.deepseek.models()).data.map(m => m.id) }) };

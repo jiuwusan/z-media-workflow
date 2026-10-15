@@ -67,7 +67,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
     if (route === '/qbt/api/v2/torrents/delete') { const fields = new URLSearchParams(raw); assert.equal(fields.get('hashes'), missingSeed.hash); cleanupCalls.push(fields.get('deleteFiles')); missingSeed = null; res.end(''); return; }
     if (route === '/qbt/api/v2/torrents/files') return json([{ index: 0, name: torrentFilename }]);
     if (route === '/qbt/api/v2/torrents/renameFile') { const form = new URLSearchParams(raw); assert.equal(form.get('oldPath'), torrentFilename); torrentFilename = form.get('newPath'); changes.push('rename'); res.end(''); return; }
-    if (route === '/qbt/api/v2/rss/items') return json({ 剧集: { 测试订阅: { url: 'https://example.com/rss', articles: [{ title: 'Dune 2021', date: '2026-10-02T12:00:00Z', link: 'https://example.com/article' }] } } });
+    if (route === '/qbt/api/v2/rss/items') return json({ 剧集: { 测试订阅: { url: 'https://example.com/rss', articles: Array.from({ length: 80 }, (_, index) => ({ title: index === 0 ? 'Dune 2021' : `测试文章 ${index} · 长标题订阅内容 1080p WEB-DL`, date: '2026-10-02T12:00:00Z', link: `https://example.com/article/${index}` })) } } });
     if (route === '/qbt/api/v2/rss/rules') return json(rules);
     if (route === '/qbt/api/v2/torrents/categories') return json({ movies: { name: 'movies', savePath: '/media/movies' }, series: { name: 'series', savePath: '/media/series' } });
     if (route === '/qbt/api/v2/rss/removeRule') { delete rules[new URLSearchParams(raw).get('ruleName')]; changes.push('remove-rule'); res.end(''); return; }
@@ -109,7 +109,38 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByRole('button', { name: '进入管理面板' }).click(); await page.getByRole('heading', { name: '工作流概览', exact: true }).waitFor();
   await page.getByRole('button', { name: '检查连接' }).click(); await page.getByText('在线', { exact: true }).first().waitFor();
   await mkdir('.test-artifacts', { recursive: true }); await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: '.test-artifacts/dashboard-desktop.png', fullPage: true });
-  await page.getByRole('link', { name: 'RSS 订阅', exact: true }).click(); await page.getByText('Dune 2021', { exact: true }).waitFor();
+  await page.getByRole('link', { name: '订阅管理', exact: true }).click(); await page.getByText('Dune 2021', { exact: true }).waitFor();
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.waitForFunction(() => {
+    const panel = document.querySelector('.rss-layout').getBoundingClientRect();
+    return panel.bottom >= innerHeight - 45 && panel.bottom <= innerHeight - 20;
+  });
+  assert.ok((await page.locator('.rss-layout .el-table').boundingBox()).height > 380);
+  await page.waitForFunction(() => {
+    const scroll = document.querySelector('.rss-layout .el-table__body-wrapper .el-scrollbar__wrap');
+    return scroll.scrollHeight > scroll.clientHeight;
+  });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight + 1), true);
+  await page.screenshot({ path: '.test-artifacts/rss-desktop-responsive.png', fullPage: true, animations: 'disabled' });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.waitForFunction(() => document.querySelector('.rss-layout').getBoundingClientRect().bottom <= innerHeight);
+  await page.setViewportSize({ width: 800, height: 900 });
+  await page.waitForFunction(() => {
+    const panels = document.querySelectorAll('.rss-layout > .panel');
+    return panels[1].getBoundingClientRect().top >= panels[0].getBoundingClientRect().bottom;
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => {
+    const table = document.querySelector('.rss-layout .el-table__body-wrapper .el-scrollbar__wrap');
+    return table.scrollWidth <= table.clientWidth + 1;
+  });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.screenshot({ path: '.test-artifacts/rss-mobile-responsive.png', fullPage: true, animations: 'disabled' });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  assert.equal(await page.getByRole('button', { name: '新建规则', exact: true }).count(), 0);
+  await page.getByRole('link', { name: '下载规则', exact: true }).click();
+  await page.getByRole('heading', { name: '自动下载规则', exact: true, level: 1 }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/download-rules');
   await page.getByRole('button', { name: '新建规则' }).click();
   const dialog = page.getByRole('dialog'); await dialog.getByLabel('规则名称').fill('电影规则'); await dialog.getByLabel('包含条件').fill('Dune.*1080p');
   assert.equal(await dialog.getByLabel('保存目录（qBittorrent 服务器路径）').count(), 0);
@@ -120,6 +151,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await dialog.getByRole('checkbox', { name: '剧集\\测试订阅', exact: true }).locator('..').click();
   await dialog.getByRole('button', { name: '保存规则' }).click(); await page.getByText('电影规则', { exact: true }).waitFor();
   assert.deepEqual(rules['电影规则'], { enabled: true, useRegex: true, mustContain: 'Dune.*1080p', mustNotContain: '(Pure|HDR)', assignedCategory: 'movies', affectedFeeds: ['https://example.com/rss'] });
+  await page.reload(); await page.getByText('电影规则', { exact: true }).waitFor();
   Object.assign(rules['电影规则'], { ignoreDays: 7, smartFilter: true, lastMatch: 'old-match', torrentParams: { category: 'series', save_path: '/custom', content_layout: 'Subfolder', stopped: true } });
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/qbittorrent/rss/rules')), page.getByRole('button', { name: '重新读取', exact: true }).click()]);
   await page.getByRole('button', { name: '编辑', exact: true }).click();
@@ -150,7 +182,8 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   assert.equal(readbacks, 0, 'metadata readback is not required to complete identification');
   await page.getByRole('link', { name: '媒体识别', exact: true }).click();
   await page.getByText('当前没有未识别媒体。新下载入库后可再次检查。', { exact: true }).waitFor();
-  await page.getByRole('link', { name: '连接与通知', exact: true }).click(); await page.getByRole('heading', { name: '下载完成通知' }).waitFor();
+  await page.getByRole('link', { name: '种子通知', exact: true }).click(); await page.getByRole('heading', { name: '下载完成通知' }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/notifications');
   await page.getByRole('button', { name: '生成通知命令', exact: true }).click();
   const completionCommand = await page.getByRole('textbox', { name: '完成通知命令', exact: true }).inputValue();
   assert.match(completionCommand, /^curl -q --fail/);
@@ -171,6 +204,9 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByRole('button', { name: '保存新增通知配置', exact: true }).click();
   await page.getByText('新增种子通知已保存，并回读确认', { exact: true }).waitFor();
   assert.equal(notification.autorun_on_torrent_added_enabled, true); assert.equal(notification.autorun_enabled, true);
+  await page.reload();
+  await page.getByRole('heading', { name: '下载完成通知', exact: true }).waitFor();
+  await page.waitForFunction(() => document.querySelector('[aria-label="启用新增种子通知"]')?.getAttribute('aria-checked') === 'true' && document.querySelector('[aria-label="启用下载完成通知"]')?.getAttribute('aria-checked') === 'true');
   const previousScans = scan;
   const addedResponse = await fetch(`${config.publicUrl}api/webhooks/qbittorrent/added`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hash: 'a'.repeat(40) }) });
   assert.equal(addedResponse.status, 202); const addedJob = (await addedResponse.json()).data;
@@ -203,11 +239,21 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByText('将清理所有 missingFiles 种子任务，保留下载文件。继续？', { exact: true }).waitFor();
   await Promise.all([page.waitForResponse(response => response.url().endsWith('/api/qbittorrent/cleanup-missing-files') && response.request().postData()?.includes('false')), page.getByRole('button', { name: '执行清理', exact: true }).click()]);
   assert.deepEqual(cleanupCalls, ['true', 'false']);
-  await page.getByRole('link', { name: '连接与通知', exact: true }).click();
-  await page.getByRole('heading', { name: '基础配置', exact: true }).waitFor();
+  assert.equal(await page.getByRole('link', { name: '服务连接', exact: true }).count(), 0);
+  await page.goto(`${config.publicUrl}settings`);
+  await page.getByRole('heading', { name: '工作流概览', exact: true, level: 1 }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/');
+  await page.getByRole('button', { name: '检查连接', exact: true }).click();
+  await page.getByText('连接正常', { exact: true }).first().waitFor();
   assert.equal(await page.getByRole('heading', { name: '文件丢失种子清理', exact: true }).count(), 0);
-  await page.getByRole('button', { name: '修改配置', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: '修改基础配置', exact: true });
+  assert.equal(await page.getByRole('button', { name: '修改配置', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('heading', { name: '下载完成通知', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('heading', { name: '新增种子通知', exact: true }).count(), 0);
+  await page.getByRole('link', { name: '基础配置', exact: true }).click();
+  await page.getByRole('heading', { name: '基础配置', exact: true, level: 1 }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/configuration');
+  assert.equal(await page.getByRole('button', { name: '修改配置', exact: true }).count(), 0);
+  const editor = page.getByRole('region', { name: '基础配置表单', exact: true });
   await editor.getByRole('textbox', { name: 'DeepSeek 模型', exact: true }).waitFor();
   assert.equal(await editor.getByRole('textbox', { name: 'qBittorrent API 密钥', exact: true }).inputValue(), '');
   await editor.getByRole('textbox', { name: 'DeepSeek 模型', exact: true }).fill('new-test-model');
@@ -215,19 +261,34 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByText('存在已保存但尚未生效的配置，请重启服务。', { exact: true }).waitFor();
   assert.equal(loadConfig(filename).deepseekModel, 'new-test-model'); assert.equal(config.deepseekModel, 'deepseek-flash');
   assert.equal(loadConfig(filename).qbtKey, 'mock-qbt'); assert.equal(new CleanupSettingsStore(filename).get().deleteFiles, false);
+  await page.reload();
+  await page.getByText('存在已保存但尚未生效的配置，请重启服务。', { exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/configuration');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: '修改配置', exact: true }).click();
+  await page.getByRole('button', { name: '展开导航' }).click();
+  await page.getByRole('link', { name: '基础配置', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 1);
   await editor.getByRole('textbox', { name: 'DeepSeek 模型', exact: true }).waitFor();
   assert.equal(await editor.getByRole('textbox', { name: 'DeepSeek 模型', exact: true }).inputValue(), 'new-test-model');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await editor.screenshot({ path: '.test-artifacts/configuration-mobile.png', animations: 'disabled' });
-  await editor.getByRole('button', { name: '取消', exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole('link', { name: '种子通知', exact: true }).click();
   await page.getByRole('button', { name: '检查已有种子', exact: true }).click();
   await page.getByRole('heading', { name: '已有种子文件检查', exact: true }).waitFor();
   await page.getByText('已检查 1 个分类包含 series 的种子', { exact: true }).waitFor();
   assert.equal(scan, previousScans); assert.equal(changes.filter(c => c === 'rename').length, 1);
-  await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '种子清理', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 }); await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '下载规则', exact: true }).click();
+  await page.getByRole('heading', { name: '自动下载规则', exact: true, level: 1 }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 1);
+  await page.screenshot({ path: '.test-artifacts/download-rules-mobile.png', fullPage: true, animations: 'disabled' });
+  await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '种子通知', exact: true }).click();
+  await page.getByRole('heading', { name: '下载完成通知', exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 1);
+  await page.screenshot({ path: '.test-artifacts/torrent-notifications-mobile.png', fullPage: true, animations: 'disabled' });
+  await page.getByRole('button', { name: '展开导航' }).click(); await page.getByRole('link', { name: '种子清理', exact: true }).click();
   await page.getByRole('heading', { name: '种子清理', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 1);

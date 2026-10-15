@@ -19,6 +19,7 @@ export function createRouter(config, services) {
   router.post('/api/auth/logout', admin, auth.logout);
   router.get('/api/dashboard', admin, system.dashboard);
   router.post('/api/connections/check', admin, system.check);
+  router.get('/api/notifications/context', admin, system.notifications);
   router.get('/api/config', admin, configuration.get);
   router.put('/api/config', admin, configuration.save);
   router.get('/api/qbittorrent/completion-notification', admin, qbt.completionNotification);

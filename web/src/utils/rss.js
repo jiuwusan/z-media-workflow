@@ -1,0 +1,1 @@
+export function flattenRssFeeds(tree, prefix = '') { const result = []; for (const [name, node] of Object.entries(tree ?? {})) { if (!node || typeof node !== 'object') continue; const full = prefix ? `${prefix}\\${name}` : name; if (node.url) result.push({ ...node, name, path: full }); else result.push(...flattenRssFeeds(node, full)); } return result; }

@@ -1,8 +1,8 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, onMounted, onBeforeUnmount } from 'vue';
 import { ElMessage } from 'element-plus';
 import { api } from '../api/index.js';
-const visible = ref(false), loading = ref(false), saving = ref(false), loaded = ref(false), error = ref(''), revision = ref(''), restartRequired = ref(false), tab = ref('connections'), confirmPassword = ref('');
+const loading = ref(false), saving = ref(false), loaded = ref(false), error = ref(''), revision = ref(''), restartRequired = ref(false), tab = ref('connections'), confirmPassword = ref('');
 const form = reactive({}), secretFields = ref({});
 const groups = [
   { name: 'connections', title: '服务连接', fields: [
@@ -30,27 +30,27 @@ async function load() {
   catch (e) { error.value = e.message; }
   finally { loading.value = false; }
 }
-async function open() { visible.value = true; tab.value = 'connections'; await load(); }
 async function save() {
+  if (!loaded.value || loading.value || saving.value) return;
   error.value = '';
   if (form.ADMIN_PASSWORD && form.ADMIN_PASSWORD !== confirmPassword.value) { error.value = '两次输入的管理员密码不一致'; tab.value = 'account'; return; }
   saving.value = true;
-  try { apply(await api('/config', { method: 'PUT', body: { values: { ...form }, revision: revision.value }, quiet: true })); visible.value = false; ElMessage.success(restartRequired.value ? '基础配置已保存，重启服务后生效' : '基础配置已保存'); }
+  try { apply(await api('/config', { method: 'PUT', body: { values: { ...form }, revision: revision.value }, quiet: true })); ElMessage.success(restartRequired.value ? '基础配置已保存，重启服务后生效' : '基础配置已保存'); }
   catch (e) { error.value = e.message; }
   finally { saving.value = false; }
 }
 function bounds(key) { return { PORT: [1, 65535], INGEST_RETRIES: [0, 5], MAX_JOBS: [10, 10000], MAX_QUEUE: [1, 1000] }[key] ?? [1, 100000000]; }
 onMounted(load);
+onBeforeUnmount(clearSecrets);
 </script>
 <template>
-  <section class="panel">
-    <div class="panel-header"><h2>基础配置</h2><el-button type="primary" :disabled="loading" @click="open">修改配置</el-button></div>
-    <div class="panel-body"><p class="muted">管理服务连接、管理员账号、访问地址和运行参数。基础配置保存后重启服务生效。</p><el-alert v-if="restartRequired" title="存在已保存但尚未生效的配置，请重启服务。" type="warning" show-icon :closable="false" /><el-alert v-if="error && !visible" :title="error" type="error" show-icon :closable="false" /></div>
-  </section>
-  <el-dialog v-model="visible" title="修改基础配置" width="min(900px, calc(100vw - 24px))" destroy-on-close :before-close="done => { if (!saving) done(); }" @closed="clearSecrets">
+  <section class="panel" aria-label="基础配置表单">
+    <div class="panel-header"><h2>配置内容</h2></div>
+    <div class="panel-body">
     <el-alert title="密码和密钥留空表示保留原值。保存后请重启服务，当前运行配置会继续使用至重启。" type="info" show-icon :closable="false" />
+    <el-alert v-if="restartRequired" title="存在已保存但尚未生效的配置，请重启服务。" type="warning" show-icon :closable="false" />
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
-    <el-form label-position="top" :disabled="loading || saving" class="configuration-form" @submit.prevent="save">
+    <el-form label-position="top" :disabled="!loaded || loading || saving" class="configuration-form" @submit.prevent="save">
       <el-tabs v-model="tab"><el-tab-pane v-for="group in groups" :key="group.name" :label="group.title" :name="group.name">
         <div class="configuration-fields"><el-row :gutter="16"><el-col v-for="[key, label, type] in group.fields" :key="key" :xs="24" :sm="12">
           <el-form-item :label="label">
@@ -62,12 +62,14 @@ onMounted(load);
         </el-col></el-row></div>
       </el-tab-pane></el-tabs>
     </el-form>
-    <template #footer><el-button :disabled="loading || saving" @click="load">重新读取</el-button><el-button :disabled="saving" @click="visible = false; clearSecrets()">取消</el-button><el-button type="primary" :disabled="!loaded || loading" :loading="saving" @click="save">保存基础配置</el-button></template>
-  </el-dialog>
+    <div class="configuration-actions"><el-button :disabled="loading || saving" @click="load">重新读取</el-button><el-button type="primary" :disabled="!loaded || loading" :loading="saving" @click="save">保存基础配置</el-button></div>
+    </div>
+  </section>
 </template>
 <style scoped>
 .configuration-form { margin-top: 20px; }
-.configuration-fields { max-height: 55vh; overflow-y: auto; overflow-x: hidden; padding: 4px 8px; }
+.configuration-fields { padding: 4px 8px; }
+.configuration-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
 .el-input-number { width: 100%; }
 .el-alert + .el-alert { margin-top: 12px; }
 </style>
