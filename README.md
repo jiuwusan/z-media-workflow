@@ -219,7 +219,7 @@ node /opt/z-media-workflow/scripts/notify-completed.mjs "%I"
 
 ## 外部 crontab 清理文件丢失的种子
 
-`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在左侧“种子清理”页面的“文件丢失种子清理”面板中，通过“同时删除下载文件”开关选择是否删除文件，并点击“保存清理设置”。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，集中保存在 `data/config.json`，重启后保留；Compose 使用持久卷中的 `/app/data/config.json`。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
+`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在左侧“种子清理”页面的“文件丢失种子清理”面板中，切换“同时删除下载文件”开关即自动保存并生效，无需另点保存。保存期间禁用清理操作，失败时恢复原开关并显示错误。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，集中保存在 `data/config.json`，重启后保留；Compose 使用持久卷中的 `/app/data/config.json`。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
 
 清理配置是同一 `config.json` 中的 `torrentCleanup` 字段，下面只展示这部分。页面保存时只更新 `torrentCleanup.deleteFiles`，保留服务地址、令牌和其他配置项。手工编辑后重启服务生效。媒体游标属于运行数据，仍保存到 `media-cursors.json`。
 
@@ -233,7 +233,9 @@ node /opt/z-media-workflow/scripts/notify-completed.mjs "%I"
 
 已有 `config.json` 中的 `torrentCleanup` 配置继续保留；没有该字段时默认保留下载文件。旧独立清理文件不再作为应用配置来源。
 
-外部调用始终要求 `Authorization: Bearer <WORKFLOW_API_TOKEN>`，即使 `WEBHOOK_AUTH_ENABLED=false` 也不会跳过鉴权；服务端 `config.json` 中的 `WORKFLOW_API_TOKEN` 必须至少 24 位。外部调用无需登录管理面板或提供 CSRF token；页面调用使用管理员会话和 CSRF 校验。请求体接受布尔值 `dryRun`：`{}` 或 `{"dryRun":true}` 仅预览，`{"dryRun":false}` 按已保存的文件删除设置执行清理，调用方不能通过参数覆盖该设置。页面预览或执行清理时会附带 `expectedDeleteFiles` 校验所确认的开关状态；设置变化时返回 409，要求重新读取并确认。
+外部调用权限与下载通知一致：`WEBHOOK_AUTH_ENABLED=false` 时无需令牌；开启认证时要求 `Authorization: Bearer <WORKFLOW_API_TOKEN>`，令牌与通知共用。外部调用无需登录管理面板或提供 CSRF token；页面调用使用管理员会话和 CSRF 校验。请求体接受布尔值 `dryRun`：`{}` 或 `{"dryRun":true}` 仅预览，`{"dryRun":false}` 按已保存的文件删除设置执行清理，调用方不能通过参数覆盖该设置。页面预览或执行清理时会附带 `expectedDeleteFiles` 校验所确认的开关状态；设置变化时返回 409，要求重新读取并确认。
+
+“种子清理 → 定时调用”支持复制调用链接或 curl 命令。链接根据当前页面地址生成，接口要求 POST，认证沿用通知设置；复制命令包含 `dryRun:false`，执行时使用已保存的文件删除开关。页面不回传令牌；仅在开启通知认证时，需自行替换命令中的 `<WORKFLOW_API_TOKEN>`；复制操作不会执行清理。
 
 在运行 crontab 的 Linux 主机上，将 `scripts/cleanup-missing-files.curl.example` 复制为 `/etc/z-media-workflow/.env.cleanup.curl`，修改服务地址和令牌，并执行 `chmod 600 /etc/z-media-workflow/.env.cleanup.curl`。令牌保存在配置文件，不写进 crontab 命令。
 
@@ -299,7 +301,7 @@ scripts/          通知与只读联通检查
 | POST | `/api/workflows/:jobId/search` | `{ itemId, name, year? }` 修正搜索 |
 | POST | `/api/workflows/:jobId/confirm` | `{ itemId, candidateId }` 确认任务已有候选 |
 
-首次配置接口使用初始化 cookie 和 CSRF token；配置后关闭写入。其他管理 API 仅接受用户名/密码登录后的 HttpOnly 会话 cookie；清理接口和下载通知仍支持各自的 Bearer 认证。同源管理写入需 CSRF token。分页参数 `page`/`pageSize`，每页最多 200。
+首次配置接口使用初始化 cookie 和 CSRF token；配置后关闭写入。其他管理 API 仅接受用户名/密码登录后的 HttpOnly 会话 cookie；清理接口和下载通知共用通知认证开关及 Bearer 令牌。同源管理写入需 CSRF token。分页参数 `page`/`pageSize`，每页最多 200。
 
 ## 运行限制与验证
 

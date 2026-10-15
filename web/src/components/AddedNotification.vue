@@ -36,7 +36,7 @@ onMounted(load);
         <el-form-item label="添加种子后运行外部程序"><el-switch v-model="form.enabled" aria-label="启用新增种子通知" /></el-form-item>
         <el-form-item label="新增种子通知命令"><el-input v-model="form.program" aria-label="新增种子通知命令" maxlength="4096" /></el-form-item>
         <el-form-item v-if="authRequired" label="qBittorrent 容器内的 curl 配置文件"><el-input v-model="configPath" aria-label="新增通知文件路径" /></el-form-item>
-        <el-button @click="generate">生成新增通知命令</el-button><el-button type="primary" :loading="saving" @click="save">保存新增通知配置</el-button>
+        <div class="button-group"><el-button @click="generate">生成新增通知命令</el-button><el-button type="primary" :loading="saving" @click="save">保存新增通知配置</el-button></div>
       </el-form>
       <p class="muted">通知仅检查“命名检查”页面中配置的剧集分类，为缺少季号的剧集文件补充季号。通知模板生成后需保存才生效；配置分类或检查已有种子请前往<router-link to="/torrent-naming">命名检查</router-link>。</p>
       <pre v-if="authRequired" class="code">{{ envTemplate }}</pre>

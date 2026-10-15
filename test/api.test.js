@@ -41,9 +41,9 @@ test('notification context requires admin login and works independently of media
   assert.equal(JSON.stringify(data).includes(webhook), false);
 });
 
-test('missing-file cleanup requires bearer authentication even when webhook auth is disabled', async t => {
-  const { req, config, services } = await setup(t);
-  config.webhookAuthRequired = false;
+test('external cleanup shares notification authentication and optional token mode', async t => {
+  const { req, config, services, login } = await setup(t);
+  config.webhookAuthRequired = true;
   const calls = [];
   services.qbittorrent.cleanupMissingFiles = async input => { calls.push(input); return { failedCount: 0, dryRun: input.dryRun }; };
   const route = '/api/qbittorrent/cleanup-missing-files';
@@ -59,7 +59,13 @@ test('missing-file cleanup requires bearer authentication even when webhook auth
   }
   assert.equal(calls.length, 2);
   config.workflowToken = '';
-  assert.equal((await req(route, { method: 'POST', headers, body: '{}' })).status, 503);
+  assert.equal((await req(route, { method: 'POST', headers, body: '{}' })).status, 401);
+  config.webhookAuthRequired = false;
+  const noToken = await req(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"dryRun":false}' });
+  assert.equal(noToken.status, 200); assert.equal((await noToken.json()).data.dryRun, false);
+  assert.equal((await req('/api/qbittorrent/cleanup-settings')).status, 401);
+  const session = await login();
+  assert.equal((await req(route, { method: 'POST', headers: { Cookie: session.Cookie }, body: '{}' })).status, 403);
 });
 
 test('partial cleanup failures return a non-success HTTP status and details for cron', async t => {

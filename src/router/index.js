@@ -10,8 +10,7 @@ export function createRouter(config, services) {
   const auth = authController(config, services.auth), workflow = workflowController(services.workflow, services.mediaLibrary), qbt = qbittorrentController(services.qbittorrent, config), system = systemController(config, services);
   const admin = async (ctx, next) => { services.auth.authenticate(ctx); await next(); };
   const webhook = async (ctx, next) => { services.auth.authenticate(ctx, true); await next(); };
-  const maintenance = async (ctx, next) => { services.auth.authenticateMaintenance(ctx); await next(); };
-  const cleanupAuth = async (ctx, next) => ctx.get('Authorization') ? maintenance(ctx, next) : admin(ctx, next);
+  const cleanupAuth = async (ctx, next) => !ctx.get('Authorization') && ctx.cookies.get('media_session', { signed: false }) ? admin(ctx, next) : webhook(ctx, next);
   const configuration = configurationController(services.configuration ?? new ConfigurationService(config));
   router.get('/health', ctx => { ctx.body = { data: { status: 'ok' } }; });
   router.post('/api/auth/login', auth.login);
