@@ -1,15 +1,19 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { WorkflowService } from '../src/service/workflow.js';
 import { MediaLibraryService } from '../src/service/media-library.js';
 import { DeepseekService } from '../src/service/deepseek.js';
+// Skip wall-clock delay in callback tests; download-refresh.test.js verifies the ten-second gate.
+const realSetTimeout = globalThis.setTimeout;
+test.before(() => mock.method(globalThis, 'setTimeout', (callback, ms, ...args) => realSetTimeout(callback, ms === 10000 ? 0 : ms, ...args)));
+test.after(() => mock.restoreAll());
 const movie = { Id: 'm', Type: 'Movie', Path: '/media/movies/Dune.2021.mkv', Name: 'Dune.2021', ProviderIds: {} };
 const candidate = { Name: 'Dune', ProductionYear: 2021, ProviderIds: { Tmdb: '438631' } };
 const config = { pollMs: 1, maxJobs: 10, maxQueue: 5, jobTtlMs: 60000, ingestRetries: 0, pathMapping: {}, seriesLibraryId: 's', movieLibraryId: 'l' };
 const fixture = (overrides = {}) => {
   const events = [];
-  const jellyfin = { refreshAndWait: async () => events.push('scan'), search: async () => [candidate], apply: async () => events.push('apply'), verify: async () => ({ ...movie, ...candidate }), item: async () => movie, refreshItem: async () => {} };
-  const deps = { jellyfin, qbittorrent: { torrent: async () => ({ progress: 1 }), files: async () => [] }, deepseek: { identify: async () => ({ name: 'Dune', year: 2021 }) }, mediaLibrary: { track: () => {}, markIdentified: () => {}, forTorrent: async () => ({ items: [movie], missingPaths: [] }), unidentified: async () => ({ items: [movie], total: 1 }), ensureItem: async () => movie }, ...overrides };
+  const jellyfin = { refreshAndWait: async () => events.push('scan'), search: async () => [candidate], apply: async () => events.push('apply'), verify: async () => ({ ...movie, ...candidate }), item: async () => movie, refreshItem: async id => { if (id === 'l') events.push('scan'); } };
+  const deps = { jellyfin, qbittorrent: { torrent: async () => ({ progress: 1, save_path: '/media/movies' }), files: async () => [{ name: 'Dune.2021.mkv', priority: 1 }] }, deepseek: { identify: async () => ({ name: 'Dune', year: 2021 }) }, mediaLibrary: { librariesForTorrent: async () => [{ ItemId: 'l', Name: '电影' }], track: () => {}, markIdentified: () => {}, forTorrent: async () => ({ items: [movie], missingPaths: [] }), unidentified: async () => ({ items: [movie], total: 1 }), ensureItem: async () => movie }, ...overrides };
   return { workflow: new WorkflowService(config, deps), events, deps };
 };
 async function done(workflow, job) {
@@ -82,7 +86,8 @@ test('retrying failed manual and download identification skips the full scan', a
     const original = workflow.enqueue(input);
     assert.equal((await done(workflow, original)).status, 'failed');
     const scansBeforeRetry = events.filter(event => event === 'scan').length;
-    deps.jellyfin.refreshAndWait = async () => { throw new Error('retries must not scan'); };
+    deps.jellyfin.refreshItem = async id => { if (id === 'l') throw new Error('retries must not refresh libraries'); };
+    deps.qbittorrent.files = async () => { throw new Error('retries must not locate libraries'); };
     const result = await done(workflow, workflow.retry(original.id));
     assert.equal(result.status, 'completed');
     assert.equal(events.filter(event => event === 'scan').length, scansBeforeRetry);
@@ -417,29 +422,12 @@ test('retry resubmits the selected candidate after uncertain application despite
   assert.equal(attempts, 2); assert.equal(retried.items[0].confirmed.Name, 'Dune'); assert.equal(retried.status, 'completed');
 });
 
-test('download callback waits for refresh then identifies library media without torrent path filtering', async () => {
-  const { workflow, deps } = fixture();
-  let release, listed = false;
-  const refreshed = new Promise(resolve => { release = resolve; });
-  deps.jellyfin.refreshAndWait = () => refreshed;
-  deps.qbittorrent.torrent = async () => ({ progress: 1, save_path: '/unrelated/downloads' });
-  deps.qbittorrent.files = async () => { throw new Error('torrent files must not be requested'); };
-  deps.mediaLibrary.forTorrent = async () => { throw new Error('torrent paths must not filter library media'); };
-  deps.mediaLibrary.unidentified = async () => { listed = true; return { items: [movie], total: 1 }; };
-  const job = workflow.enqueue({ hash: 'd'.repeat(40) });
-  await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(listed, false); assert.equal(workflow.get(job.id).stage, '扫描媒体库');
-  release();
-  const result = await done(workflow, job);
-  assert.equal(listed, true); assert.equal(result.status, 'completed'); assert.equal(result.items[0].itemId, movie.Id);
-});
-
 test('download callback reads every page of unidentified movies and series', async () => {
   const { workflow, deps } = fixture();
   const series = { Id: 'series', Type: 'Series', Path: '/media/series/Dune', Name: 'Dune', ProviderIds: {} };
   const movies = Array.from({ length: 200 }, (_, index) => ({ ...movie, Id: `movie-${index}` }));
   const pages = [], applied = [];
-  deps.qbittorrent.files = async () => { throw new Error('torrent files must not be requested'); };
+  deps.mediaLibrary.forTorrent = async () => { throw new Error('torrent paths must not filter identification'); };
   deps.mediaLibrary.unidentified = async ({ page, pageSize }) => {
     pages.push(page); assert.equal(pageSize, 200);
     return { items: page === 1 ? movies : [series], total: 201 };

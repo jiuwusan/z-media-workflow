@@ -64,12 +64,21 @@ export class WorkflowService {
     }
     const { jellyfin, qbittorrent, mediaLibrary } = this.services;
     const recovery = this.recoveries.get(job.id) ?? [];
+    let torrent;
     if (job.input.hash) {
-      this.update(job, '检查下载'); const torrent = await qbittorrent.torrent(job.input.hash);
+      this.update(job, '检查下载'); torrent = await qbittorrent.torrent(job.input.hash);
       if (torrent.progress < 1 || (torrent.amount_left ?? 0) > 0) throw new AppError('torrent 尚未下载完成', 409);
     }
     if (scanLibrary) {
-      this.update(job, '扫描媒体库'); await jellyfin.refreshAndWait();
+      this.update(job, '定位种子所属媒体库');
+      const libraries = await mediaLibrary.librariesForTorrent(torrent, await qbittorrent.files(job.input.hash));
+      job.refreshedLibraries = libraries.map(lib => ({ id: lib.ItemId, name: lib.Name }));
+      for (const library of libraries) {
+        this.update(job, `提交媒体库刷新：${library.Name ?? library.ItemId}`);
+        await jellyfin.refreshItem(library.ItemId);
+      }
+      this.update(job, '等待 10 秒后检查识别');
+      await sleep(10000);
     }
     this.update(job, '读取待识别媒体');
     // Download callbacks scan media beyond the workflow cursor, independently of torrent paths.
