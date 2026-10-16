@@ -15,7 +15,7 @@ const groups = [
     ['WORKFLOW_CALLBACK_URL', '下载完成回调地址（可选）'], ['WEBHOOK_AUTH_ENABLED', '下载回调认证', 'boolean'], ['WORKFLOW_API_TOKEN', '回调与定时清理令牌', 'secret'], ['QBT_PATH_PREFIX', 'qBittorrent 路径前缀'], ['JELLYFIN_PATH_PREFIX', 'Jellyfin 路径前缀']
   ] },
   { name: 'advanced', title: '运行参数', fields: [
-    ['REQUEST_TIMEOUT_MS', '接口请求超时（毫秒）', 'number'], ['POLL_INTERVAL_MS', '轮询间隔（毫秒）', 'number'], ['SCAN_TIMEOUT_MS', '媒体扫描超时（毫秒）', 'number'], ['VERIFY_TIMEOUT_MS', '验证超时（毫秒）', 'number'], ['TORRENT_FILES_TIMEOUT_MS', '种子文件等待超时（毫秒）', 'number'], ['INGEST_RETRIES', '识别重试次数', 'number'], ['MAX_QUEUE', '最大队列长度', 'number'], ['MAX_JOBS', '最大保留任务数', 'number'], ['JOB_TTL_MS', '任务保留时间（毫秒）', 'number'], ['SHUTDOWN_TIMEOUT_MS', '关闭服务等待时间（毫秒）', 'number'], ['MEDIA_CURSOR_FILE', '媒体游标文件路径']
+    ['REQUEST_TIMEOUT_MS', '接口请求超时（毫秒）', 'number'], ['POLL_INTERVAL_MS', '轮询间隔（毫秒）', 'number'], ['SCAN_TIMEOUT_MS', '媒体扫描超时（毫秒）', 'number'], ['LIBRARY_REFRESH_WAIT_MS', '媒体库刷新后等待时间（毫秒，0 表示不等待）', 'number'], ['VERIFY_TIMEOUT_MS', '验证超时（毫秒）', 'number'], ['TORRENT_FILES_TIMEOUT_MS', '种子文件等待超时（毫秒）', 'number'], ['INGEST_RETRIES', '识别重试次数', 'number'], ['MAX_QUEUE', '最大队列长度', 'number'], ['MAX_JOBS', '最大保留任务数', 'number'], ['JOB_TTL_MS', '任务保留时间（毫秒）', 'number'], ['SHUTDOWN_TIMEOUT_MS', '关闭服务等待时间（毫秒）', 'number'], ['MEDIA_CURSOR_FILE', '媒体游标文件路径']
   ] }
 ];
 function clearSecrets() { for (const key of Object.keys(secretFields.value)) form[key] = ''; confirmPassword.value = ''; }
@@ -39,7 +39,7 @@ async function save() {
   catch (e) { error.value = e.message; }
   finally { saving.value = false; }
 }
-function bounds(key) { return { PORT: [1, 65535], INGEST_RETRIES: [0, 5], MAX_JOBS: [10, 10000], MAX_QUEUE: [1, 1000] }[key] ?? [1, 100000000]; }
+function bounds(key) { return { PORT: [1, 65535], INGEST_RETRIES: [0, 5], MAX_JOBS: [10, 10000], MAX_QUEUE: [1, 1000], LIBRARY_REFRESH_WAIT_MS: [0, 100000000] }[key] ?? [1, 100000000]; }
 onMounted(load);
 
 onBeforeUnmount(clearSecrets);

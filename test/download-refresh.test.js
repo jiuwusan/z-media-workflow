@@ -4,19 +4,20 @@ import { WorkflowService } from '../src/service/workflow.js';
 import { MediaLibraryService } from '../src/service/media-library.js';
 import { JellyfinService } from '../src/service/jellyfin.js';
 
-test('download refresh targets torrent libraries and waits ten seconds before reading every library', async t => {
+for (const waitMs of [undefined, 2500, 0]) test(`download refresh respects wait ${waitMs ?? 'default'} before reading every library`, async t => {
+  const expectedWait = waitMs ?? 10000;
   const requests = [], waits = [], queries = [];
   let release;
   const realSetTimeout = globalThis.setTimeout;
   t.mock.method(globalThis, 'setTimeout', (callback, ms, ...args) => {
-    if (ms === 10000) { waits.push(ms); release = () => callback(...args); return; }
+    if (ms >= 1000) { assert.equal(ms, expectedWait); waits.push(ms); release = () => callback(...args); return; }
     return realSetTimeout(callback, ms, ...args);
   });
   const jellyfin = new JellyfinService({}, async (path, options) => {
     requests.push({ path, ...options });
     if (path === 'ScheduledTasks') return [{ Key: 'RefreshLibrary', State: 'Idle' }];
   });
-  const config = { maxJobs: 10, maxQueue: 5, jobTtlMs: 60000 };
+  const config = { maxJobs: 10, maxQueue: 5, jobTtlMs: 60000, libraryRefreshWaitMs: waitMs };
   const workflow = new WorkflowService(config, {
     jellyfin,
     qbittorrent: {
@@ -36,8 +37,9 @@ test('download refresh targets torrent libraries and waits ten seconds before re
   assert.deepEqual(requests, ['movies', 'series'].map(id => ({ path: `Items/${id}/Refresh`, method: 'POST', query: {
     Recursive: true, MetadataRefreshMode: 'Default', ImageRefreshMode: 'Default', ReplaceAllMetadata: false, ReplaceAllImages: false
   } })));
-  assert.deepEqual(waits, [10000]); assert.equal(queries.length, 0);
-  release(); await workflow.close();
+  assert.deepEqual(waits, expectedWait > 0 ? [expectedWait] : []);
+  if (expectedWait > 0) { assert.equal(queries.length, 0); assert.equal(workflow.get(job.id).stage, `等待 ${expectedWait / 1000} 秒后检查识别`); release(); }
+  await workflow.close();
   assert.equal(workflow.get(job.id).status, 'completed');
   assert.equal(queries.length, 1); assert.equal(queries[0].libraryId, undefined); assert.equal(queries[0].type, undefined);
 });

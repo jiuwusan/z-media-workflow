@@ -77,8 +77,11 @@ export class WorkflowService {
         this.update(job, `提交媒体库刷新：${library.Name ?? library.ItemId}`);
         await jellyfin.refreshItem(library.ItemId);
       }
-      this.update(job, '等待 10 秒后检查识别');
-      await sleep(10000);
+      const waitMs = this.config.libraryRefreshWaitMs ?? 10000;
+      if (waitMs > 0) {
+        this.update(job, `等待 ${waitMs / 1000} 秒后检查识别`);
+        await sleep(waitMs);
+      }
     }
     this.update(job, '读取待识别媒体');
     // Download callbacks scan media beyond the workflow cursor, independently of torrent paths.

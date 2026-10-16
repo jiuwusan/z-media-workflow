@@ -15,6 +15,16 @@ function fixture(t) {
   const config = loadConfig(file), service = new ConfigurationService(config);
   return { file, config, service };
 }
+
+test('library refresh wait can be edited and takes effect after reloading configuration', t => {
+  const { service, config, file } = fixture(t);
+  assert.equal(service.get().values.LIBRARY_REFRESH_WAIT_MS, 10000);
+  const saved = service.save({ values: { LIBRARY_REFRESH_WAIT_MS: 2500 }, revision: service.get().revision });
+  assert.equal(saved.values.LIBRARY_REFRESH_WAIT_MS, 2500);
+  assert.equal(saved.restartRequired, true);
+  assert.equal(config.libraryRefreshWaitMs, 10000);
+  assert.equal(loadConfig(file).libraryRefreshWaitMs, 2500);
+});
 test('global configuration excludes naming settings and preserves them when saving other fields', t => {
   const { service, file } = fixture(t);
   assert.equal(service.get().values.SERIES_CATEGORIES, undefined);

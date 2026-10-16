@@ -6,6 +6,12 @@ import path from 'node:path';
 import { loadConfig, validateConfig } from '../src/config/index.js';
 import { CleanupSettingsStore } from '../src/util/cleanup-settings.js';
 const credentials = { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'test-password', QBT_API_KEY: 'test-qbt', JELLYFIN_API_KEY: 'test-jelly', DEEPSEEK_API_KEY: 'test-deep', WEBHOOK_AUTH_ENABLED: false };
+
+test('library refresh wait defaults to ten seconds and accepts nonnegative integer milliseconds', () => {
+  assert.equal(validateConfig(credentials).libraryRefreshWaitMs, 10000);
+  for (const value of [0, 2500, 100000000]) assert.equal(validateConfig({ ...credentials, LIBRARY_REFRESH_WAIT_MS: value }).libraryRefreshWaitMs, value);
+  for (const value of [-1, 1.5, '10000', null, 100000001]) assert.throws(() => validateConfig({ ...credentials, LIBRARY_REFRESH_WAIT_MS: value }), /LIBRARY_REFRESH_WAIT_MS/);
+});
 test('series categories are a validated JSON list with no preselected categories', () => {
   assert.deepEqual(validateConfig(credentials).seriesCategories, []);
   assert.deepEqual(validateConfig({ ...credentials, SERIES_CATEGORIES: ['电视剧', 'TV'] }).seriesCategories, ['电视剧', 'TV']);

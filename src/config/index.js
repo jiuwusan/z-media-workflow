@@ -9,7 +9,7 @@ export const DEFAULT_CONFIG = {
   WORKFLOW_API_TOKEN: '', WEBHOOK_AUTH_ENABLED: false, SESSION_TTL_MS: 28800000,
   QBT_PATH_PREFIX: '', JELLYFIN_PATH_PREFIX: '', MEDIA_CURSOR_FILE: 'data/media-cursors.json',
   SERIES_CATEGORIES: [],
-  REQUEST_TIMEOUT_MS: 15000, POLL_INTERVAL_MS: 2000, SCAN_TIMEOUT_MS: 600000, VERIFY_TIMEOUT_MS: 120000,
+  REQUEST_TIMEOUT_MS: 15000, POLL_INTERVAL_MS: 2000, SCAN_TIMEOUT_MS: 600000, VERIFY_TIMEOUT_MS: 120000, LIBRARY_REFRESH_WAIT_MS: 10000,
   TORRENT_FILES_TIMEOUT_MS: 120000, INGEST_RETRIES: 2, MAX_JOBS: 200, MAX_QUEUE: 30, JOB_TTL_MS: 86400000, SHUTDOWN_TIMEOUT_MS: 30000,
   torrentCleanup: { deleteFiles: false }
 };
@@ -24,6 +24,7 @@ const fields = {
   QBT_PATH_PREFIX: ['pathMapping.from', 'string'], JELLYFIN_PATH_PREFIX: ['pathMapping.to', 'string'],
   MEDIA_CURSOR_FILE: ['mediaCursorFile', 'string'], REQUEST_TIMEOUT_MS: ['requestTimeoutMs', 'number'], POLL_INTERVAL_MS: ['pollMs', 'number'],
   SCAN_TIMEOUT_MS: ['scanTimeoutMs', 'number'], VERIFY_TIMEOUT_MS: ['verifyTimeoutMs', 'number'], TORRENT_FILES_TIMEOUT_MS: ['torrentFilesTimeoutMs', 'number'],
+  LIBRARY_REFRESH_WAIT_MS: ['libraryRefreshWaitMs', 'number'],
   INGEST_RETRIES: ['ingestRetries', 'number'], MAX_JOBS: ['maxJobs', 'number'], MAX_QUEUE: ['maxQueue', 'number'],
   JOB_TTL_MS: ['jobTtlMs', 'number'], SHUTDOWN_TIMEOUT_MS: ['shutdownMs', 'number']
 };
@@ -42,7 +43,7 @@ export function validateConfig(document, filename = CONFIG_FILE) {
     if (values[key] === undefined) continue;
     if (typeof values[key] !== type) throw new AppError(`${key} 必须是 JSON ${type}`);
     if (type === 'number') {
-      const [min, max] = { PORT: [1, 65535], INGEST_RETRIES: [0, 5], MAX_JOBS: [10, 10000], MAX_QUEUE: [1, 1000] }[key] ?? [1, 1e8];
+      const [min, max] = { PORT: [1, 65535], INGEST_RETRIES: [0, 5], MAX_JOBS: [10, 10000], MAX_QUEUE: [1, 1000], LIBRARY_REFRESH_WAIT_MS: [0, 1e8] }[key] ?? [1, 1e8];
       if (!Number.isInteger(values[key]) || values[key] < min || values[key] > max) throw new AppError(`${key} 配置无效`);
     }
     let value = values[key];
