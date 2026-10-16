@@ -32,6 +32,22 @@ export class MediaLibraryService {
     const items = (await this.scopedItems(filters)).filter(i => this.cursors.needsIdentification(i));
     return { items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize };
   }
+  async list({ page = 1, pageSize = 20, sort = 'date_desc', search = '', ...filters } = {}) {
+    if (!['date_desc', 'date_asc', 'name_asc', 'year_desc'].includes(sort)) throw new AppError('媒体排序方式无效');
+    const keyword = search.trim().normalize('NFKC').toLocaleLowerCase('zh-CN');
+    const items = (await this.scopedItems(filters)).filter(item => !keyword || String(item.Name ?? '').normalize('NFKC').toLocaleLowerCase('zh-CN').includes(keyword));
+    const value = item => {
+      if (sort === 'name_asc') return item.Name?.trim() || null;
+      if (sort === 'year_desc') return Number.isInteger(item.ProductionYear) && item.ProductionYear > 0 ? item.ProductionYear : null;
+      const date = Date.parse(item.DateCreated ?? ''); return Number.isFinite(date) ? date : null;
+    };
+    items.sort((a, b) => {
+      const av = value(a), bv = value(b);
+      let order = av === null ? (bv === null ? 0 : 1) : bv === null ? -1 : sort === 'name_asc' ? av.localeCompare(bv, 'zh-CN', { numeric: true, sensitivity: 'base' }) : (av - bv) * (sort === 'date_asc' ? 1 : -1);
+      return order || String(a.Id).localeCompare(String(b.Id));
+    });
+    return { items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, pageSize };
+  }
   async ensureItem(id, filters = {}) {
     const item = (await this.scopedItems({ ...filters, itemIds: [id] }))[0];
     if (!item) throw new AppError('媒体条目不存在', 404);

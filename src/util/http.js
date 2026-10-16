@@ -3,7 +3,7 @@ export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 export function createHttpClient({ baseUrl, headers = {}, timeoutMs = 15000 }) {
   const base = new URL(baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
-  return async (path, { method = 'GET', query, json, form, timeout = timeoutMs } = {}) => {
+  return async (path, { method = 'GET', query, json, form, timeout = timeoutMs, responseType = 'text' } = {}) => {
     const url = new URL(path.replace(/^\/+/, ''), base);
     if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) throw new AppError('非法 API 路径');
     for (const [key, value] of Object.entries(query ?? {})) if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
@@ -14,8 +14,14 @@ export function createHttpClient({ baseUrl, headers = {}, timeoutMs = 15000 }) {
     for (let attempt = 0; ; attempt++) {
       try {
         const res = await fetch(url, { method, headers: requestHeaders, body, redirect: 'manual', signal: AbortSignal.timeout(timeout) });
+        if (responseType === 'image' && res.status === 404) { await res.body?.cancel(); return null; }
         if (method === 'GET' && (res.status === 429 || res.status >= 500) && attempt < 2) { await res.body?.cancel(); await sleep(200 * 2 ** attempt); continue; }
         if (!res.ok) { await res.body?.cancel(); throw new AppError(`上游 API ${method} ${url.pathname} 返回 HTTP ${res.status}`, 502, 'UPSTREAM_ERROR'); }
+        if (responseType === 'image') {
+          const contentType = res.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+          if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'].includes(contentType)) { await res.body?.cancel(); throw new AppError('上游返回了无效海报图片', 502); }
+          return { contentType, body: Buffer.from(await res.arrayBuffer()) };
+        }
         const raw = await res.text();
         if (!raw) return undefined;
         if (res.headers.get('content-type')?.includes('json')) {

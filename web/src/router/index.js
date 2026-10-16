@@ -4,6 +4,7 @@ const router = createRouter({ history: createWebHistory(), routes: [
   { path: '/login', component: () => import('../views/Login.vue') },
   { path: '/setup', component: () => import('../views/Setup.vue') },
   { path: '/', component: () => import('../views/Dashboard.vue'), meta: { title: '工作流概览', subtitle: '从下载完成，到媒体就绪。' } },
+  { path: '/library', component: () => import('../views/Library.vue'), meta: { title: '媒体库', subtitle: '浏览全部电影和电视剧，手动纠正媒体识别结果。' } },
   { path: '/rss', component: () => import('../views/Rss.vue'), meta: { title: 'RSS 订阅', subtitle: '管理订阅源并浏览订阅文章。' } },
   { path: '/download-rules', component: () => import('../views/DownloadRules.vue'), meta: { title: '自动下载规则', subtitle: '设置订阅文章匹配条件和下载分类，管理 qBittorrent 自动下载规则。' } },
   { path: '/jobs', component: () => import('../views/Jobs.vue'), meta: { title: '工作流任务', subtitle: '跟踪扫描、识别和媒体信息确认的每一步。' } },

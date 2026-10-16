@@ -1,10 +1,10 @@
 <script setup>
 import { ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { DataAnalysis, Connection, Filter, Tickets, Film, EditPen, Bell, Delete, Tools, SwitchButton, Menu, ArrowRight } from '@element-plus/icons-vue';
+import { DataAnalysis, Connection, Filter, Tickets, Film, Collection, EditPen, Bell, Delete, Tools, SwitchButton, Menu, ArrowRight } from '@element-plus/icons-vue';
 import { api, setSession } from './api/index.js';
 const route = useRoute(), router = useRouter(), expanded = ref(false);
-const links = [{ path: '/', label: '概览', icon: DataAnalysis }, { path: '/rss', label: '订阅管理', icon: Connection }, { path: '/download-rules', label: '下载规则', icon: Filter }, { path: '/jobs', label: '任务管理', icon: Tickets }, { path: '/media', label: '媒体识别', icon: Film }, { path: '/torrent-naming', label: '命名检查', icon: EditPen }, { path: '/notifications', label: '种子通知', icon: Bell }, { path: '/torrent-cleanup', label: '种子清理', icon: Delete }, { path: '/configuration', label: '基础配置', icon: Tools }];
+const links = [{ path: '/', label: '概览', icon: DataAnalysis }, { path: '/library', label: '媒体库', icon: Collection }, { path: '/rss', label: '订阅管理', icon: Connection }, { path: '/download-rules', label: '下载规则', icon: Filter }, { path: '/jobs', label: '任务管理', icon: Tickets }, { path: '/media', label: '媒体识别', icon: Film }, { path: '/torrent-naming', label: '命名检查', icon: EditPen }, { path: '/notifications', label: '种子通知', icon: Bell }, { path: '/torrent-cleanup', label: '种子清理', icon: Delete }, { path: '/configuration', label: '基础配置', icon: Tools }];
 async function logout() { try { await api('/auth/logout', { method: 'POST' }); setSession(null); await router.push('/login'); } catch {} }
 </script>
 <template>

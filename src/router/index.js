@@ -7,7 +7,7 @@ import { ConfigurationService } from '../service/configuration.js';
 import { configurationController } from '../controller/configuration.js';
 export function createRouter(config, services) {
   const router = new Router();
-  const auth = authController(config, services.auth), workflow = workflowController(services.workflow, services.mediaLibrary), qbt = qbittorrentController(services.qbittorrent, config), system = systemController(config, services);
+  const auth = authController(config, services.auth), workflow = workflowController(services.workflow, services.mediaLibrary, services.jellyfin), qbt = qbittorrentController(services.qbittorrent, config), system = systemController(config, services);
   const admin = async (ctx, next) => { services.auth.authenticate(ctx); await next(); };
   const webhook = async (ctx, next) => { services.auth.authenticate(ctx, true); await next(); };
   const cleanupAuth = async (ctx, next) => !ctx.get('Authorization') && ctx.cookies.get('media_session', { signed: false }) ? admin(ctx, next) : webhook(ctx, next);
@@ -42,6 +42,10 @@ export function createRouter(config, services) {
   router.post('/api/webhooks/qbittorrent/completed', webhook, workflow.completed);
   router.post('/api/webhooks/qbittorrent/added', webhook, workflow.added);
   router.get('/api/media/unidentified', admin, workflow.unidentified);
+  router.get('/api/media/libraries', admin, workflow.libraries);
+  router.get('/api/media/items', admin, workflow.media);
+  router.get('/api/media/:itemId/poster', admin, workflow.poster);
+  router.post('/api/media/:itemId/identify', admin, workflow.identify);
   router.get('/api/workflows', admin, workflow.list);
   router.post('/api/workflows/scan', admin, workflow.scan);
   router.post('/api/workflows/check-torrents', admin, workflow.checkTorrents);

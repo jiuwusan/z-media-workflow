@@ -11,6 +11,100 @@ import { SetupService } from '../src/service/setup.js';
 import { createServices } from '../src/service/index.js';
 import { createApp } from '../src/app.js';
 import { CleanupSettingsStore } from '../src/util/cleanup-settings.js';
+import { MediaLibraryService } from '../src/service/media-library.js';
+import { MediaCursorStore } from '../src/util/media-cursor.js';
+import { WorkflowService } from '../src/service/workflow.js';
+
+test('media library supports manual correction while preserving filters, sort and page', { timeout: 60000 }, async t => {
+  const libraries = [{ ItemId: 'movies', Name: '电影库', CollectionType: 'movies', Locations: ['/media/movies'] }];
+  const items = Array.from({ length: 25 }, (_, index) => ({
+    Id: String(index + 1).padStart(32, '0'), Type: 'Movie', LibraryId: 'movies',
+    Name: `Wrong movie ${String(index + 1).padStart(2, '0')}`, DateCreated: `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00Z`,
+    ProductionYear: 2020, Path: `/media/movies/Dune.${index + 1}.mkv`, ProviderIds: { Tmdb: 'wrong' }
+  }));
+  const writes = [], errors = [], cursor = new MediaCursorStore();
+  cursor.track(items); for (const item of items) cursor.confirm(item);
+  const cursorBefore = structuredClone(cursor.state);
+  const jellyfin = {
+    libraries: async () => libraries,
+    items: async () => structuredClone(items),
+    poster: async id => id.endsWith('21') ? null : { contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=', 'base64') },
+    search: async () => [{ Name: 'Dune', ProductionYear: 2021, ProviderIds: { Tmdb: '438631' } }, { Name: 'Dune', ProductionYear: 1984, ProviderIds: { Tmdb: '841' } }],
+    apply: async (id, candidate) => { writes.push({ id, candidate }); Object.assign(items.find(i => i.Id === id), candidate); },
+    refreshItem: async () => {},
+    refreshAndWait: async () => { throw new Error('manual correction must not scan'); }
+  };
+  const config = { adminUsername: 'admin', adminPassword: 'test-password-12345', sessionMs: 60000, maxJobs: 20, maxQueue: 10, jobTtlMs: 60000, publicUrl: 'http://localhost/' };
+  const mediaLibrary = new MediaLibraryService({}, jellyfin, cursor);
+  const services = { jellyfin, mediaLibrary, deepseek: { identify: async () => { throw new Error('manual correction must not call AI'); } } };
+  services.workflow = new WorkflowService(config, services);
+  const server = createApp({ config, services }).listen(0, '127.0.0.1');
+  await new Promise(r => server.once('listening', r)); t.after(() => server.close());
+  let executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+  if (!executablePath && process.platform === 'win32') { const edge = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'; try { await access(edge); executablePath = edge; } catch {} }
+  const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) }); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}/library`);
+  await page.getByRole('textbox', { name: '用户名', exact: true }).fill(config.adminUsername);
+  await page.getByRole('textbox', { name: '密码', exact: true }).fill(config.adminPassword);
+  await page.getByRole('button', { name: '进入管理面板' }).click();
+  await page.getByRole('link', { name: '媒体库', exact: true }).click();
+  await page.getByRole('heading', { name: '媒体库', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Wrong movie 25', exact: true }).waitFor();
+  const navLabels = await page.locator('.sidebar nav a').allTextContents();
+  assert.equal(navLabels[0].trim(), '概览'); assert.equal(navLabels[1].trim(), '媒体库');
+  assert.equal((await mediaLibrary.unidentified()).total, 0);
+  await page.getByRole('combobox', { name: '媒体库筛选' }).locator('xpath=ancestor::div[contains(@class,"el-select__wrapper")]').click(); await page.getByRole('option', { name: '电影库', exact: true }).click();
+  await page.getByRole('combobox', { name: '媒体类型筛选' }).locator('xpath=ancestor::div[contains(@class,"el-select__wrapper")]').click(); await page.getByRole('option', { name: '电影', exact: true }).click();
+  await page.getByRole('textbox', { name: '搜索媒体名称', exact: true }).fill('Wrong');
+  await page.getByRole('button', { name: '搜索', exact: true }).click();
+  await page.getByRole('combobox', { name: '媒体排序' }).locator('xpath=ancestor::div[contains(@class,"el-select__wrapper")]').click(); await page.getByRole('option', { name: '添加时间正序', exact: true }).click();
+  await page.locator('.media-card').first().getByRole('heading', { name: 'Wrong movie 01', exact: true }).waitFor();
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
+  const row = page.locator('.media-card').filter({ hasText: 'Wrong movie 21' });
+  await row.getByLabel('暂无海报', { exact: true }).waitFor();
+  await row.getByRole('button', { name: '识别', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '识别媒体 · 手动纠错', exact: true });
+  await dialog.getByRole('button', { name: '选择此候选' }).first().waitFor();
+  assert.deepEqual(writes, []);
+  await dialog.getByRole('textbox', { name: '纠错搜索名称' }).fill('Dune');
+  await dialog.getByRole('spinbutton', { name: '纠错搜索年份' }).fill('1984');
+  await dialog.getByRole('button', { name: '搜索候选', exact: true }).click();
+  const candidate = dialog.locator('.candidate').filter({ has: page.getByText('1984', { exact: true }) });
+  await candidate.getByRole('button', { name: '选择此候选' }).waitFor();
+  assert.deepEqual(writes, []);
+  await candidate.getByRole('button', { name: '选择此候选' }).click();
+  const confirmation = page.getByRole('dialog', { name: '确认媒体纠错', exact: true });
+  await confirmation.getByRole('button', { name: '取消', exact: true }).click();
+  assert.deepEqual(writes, []);
+  await mkdir('.test-artifacts', { recursive: true });
+  await dialog.screenshot({ path: '.test-artifacts/library-correction-desktop.png', animations: 'disabled' });
+  await candidate.getByRole('button', { name: '选择此候选' }).click();
+  await confirmation.getByRole('button', { name: '确认并应用', exact: true }).click();
+  await dialog.getByText('识别结果已保存，元数据由 Jellyfin 后台加载。', { exact: true }).waitFor();
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden' });
+  assert.equal(writes.length, 1); assert.equal(writes[0].candidate.ProviderIds.Tmdb, '841');
+  await page.waitForFunction(() => document.querySelector('.el-pagination .is-active')?.textContent === '2' && document.querySelectorAll('.media-card').length === 4);
+  assert.equal(await page.getByRole('textbox', { name: '搜索媒体名称', exact: true }).inputValue(), 'Wrong');
+  assert.equal(await page.locator('.el-select__selected-item').getByText('添加时间正序', { exact: true }).count(), 1);
+  assert.equal(await page.locator('.el-select__selected-item').getByText('电影库', { exact: true }).count(), 1);
+  assert.equal(await page.locator('.el-select__selected-item').getByText('电影', { exact: true }).count(), 1);
+  await page.screenshot({ path: '.test-artifacts/library-posterwall-desktop.png', fullPage: true, animations: 'disabled' });
+  await page.getByRole('textbox', { name: '搜索媒体名称', exact: true }).fill('Dune');
+  await page.getByRole('button', { name: '搜索', exact: true }).click();
+  await page.getByRole('heading', { name: 'Dune', exact: true }).waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.screenshot({ path: '.test-artifacts/library-posterwall-mobile.png', fullPage: true, animations: 'disabled' });
+  await page.getByRole('button', { name: '识别', exact: true }).click();
+  await dialog.getByRole('button', { name: '选择此候选' }).first().waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await dialog.screenshot({ path: '.test-artifacts/library-correction-mobile.png', animations: 'disabled' });
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  assert.equal(writes.length, 1); assert.deepEqual(cursor.state, cursorBefore); assert.deepEqual(errors, []);
+});
 test('first-run wizard saves config, handles validation and remains disabled after reload', { timeout: 60000 }, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'workflow-setup-ui-'));
   t.after(() => rm(root, { recursive: true, force: true }));

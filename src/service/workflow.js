@@ -58,6 +58,7 @@ export class WorkflowService {
     this.update(job, status === 'needs_review' ? '等待人工确认' : status === 'failed' ? '存在失败条目' : '完成', status);
   }
   async run(job, { scanLibrary = Boolean(job.input.hash) } = {}) {
+    if (job.input.correction) return this.runCorrection(job);
     if (job.input.event === 'added') {
       await this.services.torrentNaming.run(job, (job, stage) => this.update(job, stage));
       this.recoveries.delete(job.id); return;
@@ -142,6 +143,14 @@ export class WorkflowService {
     // Recovery is now represented in concrete item results; preflight failures retain it.
     this.recoveries.delete(job.id);
   }
+  async runCorrection(job) {
+    const item = await this.services.mediaLibrary.ensureItem(job.input.itemIds[0]);
+    const entry = { itemId: item.Id, libraryId: item.LibraryId, type: item.Type, originalName: item.Name, path: item.Path, source: mediaSource(item), identity: validateIdentity(job.input.identity), status: 'running', candidates: [] };
+    job.items.push(entry);
+    await this.findCandidates(job, entry, item);
+    entry.status = 'needs_review'; entry.message = '请选择正确候选，确认后才会更新媒体信息';
+    this.recoveries.delete(job.id);
+  }
   async findCandidates(job, entry, item) {
     delete entry.candidateSearchWarning;
     const names = entry.type === 'Movie' ? movieSearchNames(entry.identity.name) : [entry.identity.name];
@@ -191,7 +200,7 @@ export class WorkflowService {
     const { candidateId, ...remote } = candidate;
     // Successful submission completes identification; Jellyfin loads metadata asynchronously.
     await this.services.jellyfin.apply(entry.itemId, remote, item);
-    this.services.mediaLibrary.markIdentified(item);
+    if (!job.input.correction) this.services.mediaLibrary.markIdentified(item);
     entry.confirmed = { Name: remote.Name, ProductionYear: remote.ProductionYear, ProviderIds: structuredClone(remote.ProviderIds) };
     entry.status = 'completed'; delete entry.error; delete entry.message;
     this.update(job, '提交后台元数据刷新');
@@ -221,6 +230,7 @@ export class WorkflowService {
   }
   search(id, itemId, identity) {
     const { job, entry } = this.reviewEntry(id, itemId); const valid = validateIdentity(identity);
+    if (job.input.correction) job.input.identity = valid;
     return this.queueAction(job, async () => { const item = await this.services.mediaLibrary.ensureItem(itemId, { libraryId: entry.libraryId ?? job.input.libraryId, type: entry.type }); entry.identity = valid; delete entry.aiDecision; delete entry.aiDecisionError; delete entry.selectionMethod; delete entry.selectionWarning; await this.findCandidates(job, entry, item); entry.status = 'needs_review'; });
   }
   async close(timeoutMs = 30000) { this.stopping = true; const end = Date.now() + timeoutMs; while (this.running && Date.now() < end) await sleep(25); return !this.running; }

@@ -6,6 +6,34 @@ import { QbittorrentService } from '../src/service/qbittorrent.js';
 
 const task = (state, end, status = 'Completed') => ({ Id: 'scan', Key: 'RefreshLibrary', State: state, LastExecutionResult: end ? { EndTimeUtc: end, Status: status } : null });
 
+test('library names prefer the homepage collection item names while preserving configuration identity and locations', async () => {
+  const libraries = [
+    { ItemId: 'series', Name: 'series', CollectionType: 'tvshows', Locations: ['/media/series'] },
+    { ItemId: 'movies', Name: 'movie', CollectionType: 'movies', Locations: ['/media/movies'] },
+    { ItemId: 'pure', Name: 'pure', CollectionType: 'tvshows', Locations: ['/media/pure'] }
+  ];
+  const jellyfin = new JellyfinService({}, async (path, options) => {
+    if (path === 'Library/VirtualFolders') return libraries;
+    assert.equal(path, 'Items'); assert.equal(options.query.Ids, 'series,movies,pure');
+    assert.equal(options.query.IncludeItemTypes, undefined);
+    return { Items: [{ Id: 'movies', Name: '电影' }, { Id: 'series', Name: '剧集' }, { Id: 'pure', Name: '剧集 | 免广告' }] };
+  });
+  assert.deepEqual(await jellyfin.libraries(), libraries.map((lib, index) => ({ ...lib, Name: ['剧集', '电影', '剧集 | 免广告'][index] })));
+  assert.equal(libraries[0].Name, 'series');
+});
+
+test('library display names fall back to configured names when collection lookup is incomplete or unavailable', async () => {
+  const libraries = [{ ItemId: 'one', Name: 'series' }, { ItemId: 'two', Name: 'movie' }, { ItemId: 'three', Name: 'pure' }];
+  for (const unavailable of [false, true]) {
+    const jellyfin = new JellyfinService({}, async path => {
+      if (path === 'Library/VirtualFolders') return libraries;
+      if (unavailable) throw new Error('collection lookup unavailable');
+      return { Items: [{ Id: 'one', Name: '剧集' }, { Id: 'two', Name: ' ' }] };
+    });
+    assert.deepEqual((await jellyfin.libraries()).map(lib => lib.Name), unavailable ? ['series', 'movie', 'pure'] : ['剧集', 'movie', 'pure']);
+  }
+});
+
 test('added notification only changes its native preference fields and rename uses relative paths', async () => {
   const prefs = { autorun_enabled: true, autorun_program: 'completed', autorun_on_torrent_added_enabled: false, autorun_on_torrent_added_program: '' };
   const qbt = new QbittorrentService({}, async (path, options) => {

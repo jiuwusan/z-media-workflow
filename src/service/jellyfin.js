@@ -13,7 +13,18 @@ export class JellyfinService {
     this.http = http ?? createHttpClient({ baseUrl: config.jellyfinUrl, headers: { 'X-Emby-Token': config.jellyfinKey }, timeoutMs: config.requestTimeoutMs });
   }
   info() { return this.http('System/Info'); }
-  libraries() { return this.http('Library/VirtualFolders'); }
+  poster(id) { return this.http(`Items/${encodeURIComponent(id)}/Images/Primary`, { query: { maxWidth: 400, quality: 85 }, responseType: 'image' }); }
+  async libraries() {
+    const libraries = await this.http('Library/VirtualFolders');
+    const ids = libraries.map(lib => lib.ItemId).filter(Boolean);
+    if (!ids.length) return libraries;
+    // Homepage titles belong to CollectionFolder items, not VirtualFolders configuration.
+    try {
+      const result = await this.http('Items', { query: { Ids: ids.join(','), Limit: ids.length } });
+      const names = new Map((result.Items ?? []).filter(item => typeof item.Name === 'string' && item.Name.trim()).map(item => [item.Id, item.Name]));
+      return libraries.map(lib => ({ ...lib, Name: names.get(lib.ItemId) ?? lib.Name }));
+    } catch { return libraries; }
+  }
   tasks() { return this.http('ScheduledTasks'); }
   async scanTask() {
     const task = (await this.tasks()).find(t => t.Key === 'RefreshLibrary');
