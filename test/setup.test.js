@@ -31,7 +31,7 @@ test('first-run status exposes no secrets and blocks normal APIs while health wo
 test('setup requires CSRF, validates configuration and never writes rejected submissions', async t => {
   const { request, headers, file } = await fixture(t);
   assert.equal((await request('/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) })).status, 403);
-  for (const body of [{ ...input, QBT_URL: 'invalid' }, { ...input, ADMIN_PASSWORD: 'short' }, { ...input, PORT: 9999 }, { ...input, unknown: true }, { ...input, WORKFLOW_API_TOKEN: 0 }]) {
+  for (const body of [{ ...input, QBT_URL: 'invalid' }, { ...input, ADMIN_PASSWORD: '1234567' }, { ...input, PORT: 9999 }, { ...input, unknown: true }, { ...input, WORKFLOW_API_TOKEN: 0 }]) {
     const r = await request('/api/setup', { method: 'POST', headers, body: JSON.stringify(body) });
     assert.equal(r.status, 400); assert.equal(existsSync(file), false);
   }
@@ -45,11 +45,11 @@ test('services that cannot initialize leave setup available without persisting c
 });
 test('setup persists defaults once, activates login immediately and disables further setup', async t => {
   const { request, headers, file } = await fixture(t);
-  const account = { ...input, ADMIN_USERNAME: '管理员'.repeat(100) };
+  const account = { ...input, ADMIN_USERNAME: '管理员'.repeat(100), ADMIN_PASSWORD: '12345678' };
   const response = await request('/api/setup', { method: 'POST', headers, body: JSON.stringify(account) });
   assert.equal(response.status, 201); assert.deepEqual((await response.json()).data, { initialized: true });
   const saved = JSON.parse(readFileSync(file, 'utf8'));
-  assert.equal(saved.ADMIN_PASSWORD, input.ADMIN_PASSWORD); assert.equal(saved.REQUEST_TIMEOUT_MS, 15000);
+  assert.equal(saved.ADMIN_PASSWORD, account.ADMIN_PASSWORD); assert.equal(saved.REQUEST_TIMEOUT_MS, 15000);
   assert.ok(saved.WORKFLOW_API_TOKEN.length >= 24); assert.deepEqual(saved.torrentCleanup, { deleteFiles: false });
   assert.equal(loadConfig(file).qbtKey, input.QBT_API_KEY);
   assert.equal(loadConfig(file).adminUsername, account.ADMIN_USERNAME);

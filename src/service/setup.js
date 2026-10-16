@@ -21,7 +21,7 @@ export class SetupService {
     if (!tokenEquals(ctx.cookies.get('media_setup', { signed: false }), this.nonce) || !tokenEquals(ctx.get('X-CSRF-Token'), this.nonce)) throw new AppError('初始化 CSRF 校验失败，请刷新页面', 403);
     const input = ctx.request.body;
     if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !allowed.includes(key))) throw new AppError('初始化参数无效');
-    if (typeof input.ADMIN_PASSWORD !== 'string' || input.ADMIN_PASSWORD.length < 12) throw new AppError('管理员密码至少 12 位');
+    if (typeof input.ADMIN_PASSWORD !== 'string' || input.ADMIN_PASSWORD.length < 8) throw new AppError('管理员密码至少 8 位');
     const token = input.WORKFLOW_API_TOKEN === undefined || input.WORKFLOW_API_TOKEN === '' ? randomBytes(32).toString('hex') : input.WORKFLOW_API_TOKEN;
     const document = { ...DEFAULT_CONFIG, ...input, WORKFLOW_API_TOKEN: token, torrentCleanup: { deleteFiles: false } };
     const config = validateConfig(document, this.filename);

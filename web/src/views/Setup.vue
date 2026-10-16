@@ -8,7 +8,7 @@ const connections = [{ title: 'qBittorrent', url: 'QBT_URL', key: 'QBT_API_KEY' 
 onMounted(async () => { try { csrf.value = (await api('/setup/status', { quiet: true })).csrfToken; } catch (e) { error.value = e.message; } });
 function next() {
   error.value = '';
-  if (step.value === 0 && (!form.ADMIN_USERNAME.trim() || form.ADMIN_PASSWORD.length < 12 || form.ADMIN_PASSWORD !== confirmPassword.value)) { error.value = '请填写用户名、至少 12 位的密码，并确保两次密码一致。'; return; }
+  if (step.value === 0 && (!form.ADMIN_USERNAME.trim() || form.ADMIN_PASSWORD.length < 8 || form.ADMIN_PASSWORD !== confirmPassword.value)) { error.value = '请填写用户名、至少 8 位的密码，并确保两次密码一致。'; return; }
   if (step.value === 1) {
     for (const connection of connections) {
       let url; try { url = new URL(form[connection.url]); } catch {}
@@ -32,7 +32,7 @@ async function save() {
       <el-form label-position="top" :disabled="busy" @submit.prevent="step < 2 ? next() : save()">
         <div v-show="step === 0">
           <el-form-item label="管理员用户名"><el-input v-model="form.ADMIN_USERNAME" aria-label="管理员用户名" autocomplete="username" /></el-form-item>
-          <el-form-item label="管理员密码"><el-input v-model="form.ADMIN_PASSWORD" aria-label="管理员密码" type="password" show-password autocomplete="new-password" maxlength="1024" placeholder="至少 12 位" /></el-form-item>
+          <el-form-item label="管理员密码"><el-input v-model="form.ADMIN_PASSWORD" aria-label="管理员密码" type="password" show-password autocomplete="new-password" maxlength="1024" placeholder="至少 8 位" /></el-form-item>
           <el-form-item label="确认密码"><el-input v-model="confirmPassword" aria-label="确认密码" type="password" show-password autocomplete="new-password" maxlength="1024" /></el-form-item>
         </div>
         <div v-show="step === 1">

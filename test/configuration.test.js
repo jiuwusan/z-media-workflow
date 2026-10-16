@@ -55,6 +55,15 @@ test('configuration patches persist, retain blank secrets and preserve cleanup a
   assert.equal(JSON.stringify(saved).includes('new-deep-secret'), false);
   assert.equal(new ConfigurationService(loadConfig(file)).get().restartRequired, false);
 });
+test('administrator password changes accept eight characters and reject seven without saving', t => {
+  const { service, file } = fixture(t);
+  const before = readFileSync(file, 'utf8');
+  assert.throws(() => service.save({ values: { ADMIN_PASSWORD: '1234567' }, revision: service.get().revision }), /管理员密码至少 8 位/);
+  assert.equal(readFileSync(file, 'utf8'), before);
+  service.save({ values: { ADMIN_PASSWORD: '12345678' }, revision: service.get().revision });
+  assert.equal(loadConfig(file).adminPassword, '12345678');
+});
+
 test('stale edits and invalid settings never overwrite the configuration', t => {
   const { service, file } = fixture(t), revision = service.get().revision;
   new CleanupSettingsStore(file).set({ deleteFiles: true });

@@ -31,7 +31,7 @@ export class ConfigurationService {
     for (const [key, value] of Object.entries(input.values)) {
       if (!Object.hasOwn(CONFIG_FIELDS, key)) throw new AppError('存在不支持的配置项');
       if (secrets.has(key) && value === '') continue;
-      if (key === 'ADMIN_PASSWORD' && (typeof value !== 'string' || value.length < 12)) throw new AppError('管理员密码至少 12 位');
+      if (key === 'ADMIN_PASSWORD' && (typeof value !== 'string' || value.length < 8)) throw new AppError('管理员密码至少 8 位');
       next[key] = value;
     }
     validateConfig(next, this.filename);
