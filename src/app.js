@@ -8,11 +8,12 @@ import { createServices } from './service/index.js';
 import { AuthService } from './service/auth.js';
 import { redact, log } from './util/logger.js';
 import { AppError } from './util/error.js';
-export function createApp({ config, setup, servicesFactory = createServices, services = setup && !setup.initialized ? {} : servicesFactory(config) }) {
+import { LifecycleService } from './service/lifecycle.js';
+export function createApp({ config, setup, servicesFactory = createServices, services = setup && !setup.initialized ? {} : servicesFactory(config), lifecycle = new LifecycleService() }) {
   const app = new Koa(); app.proxy = config.trustProxy;
   let routes, allowedMethods;
   function activate(nextConfig = config, nextServices = services) {
-    Object.assign(config, nextConfig); services = nextServices; services.auth ??= new AuthService(config);
+    Object.assign(config, nextConfig); services = nextServices; services.auth ??= new AuthService(config); services.lifecycle = lifecycle;
     app.proxy = config.trustProxy; app.services = services;
     const router = createRouter(config, services); routes = router.routes(); allowedMethods = router.allowedMethods();
   }
@@ -27,6 +28,10 @@ export function createApp({ config, setup, servicesFactory = createServices, ser
   const parseJson = bodyParser({ enableTypes: ['json'], jsonLimit: '128kb' });
   const parseCallbackForm = bodyParser({ enableTypes: ['form'], formLimit: '8kb' });
   app.use((ctx, next) => ctx.method === 'POST' && ctx.path === '/api/webhooks/qbittorrent/completed' && ctx.is('application/x-www-form-urlencoded') ? parseCallbackForm(ctx, next) : parseJson(ctx, next));
+  app.use((ctx, next) => {
+    if (lifecycle.pending && ctx.path.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(ctx.method)) throw new AppError('服务正在重启，请稍后重试', 503);
+    return next();
+  });
   app.use(async (ctx, next) => {
     if (ctx.path === '/api/setup/status' && ctx.method === 'GET') { ctx.body = { data: setup ? setup.status(ctx) : { initialized: true } }; return; }
     if (ctx.path === '/api/setup' && ctx.method === 'POST') {

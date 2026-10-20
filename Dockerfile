@@ -14,6 +14,7 @@ FROM node:22-slim AS runtime
 WORKDIR /app
 COPY --from=server-deps --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json ./
+COPY --chown=node:node ecosystem.config.cjs ./
 COPY --chown=node:node src/ ./src/
 COPY --chown=node:node scripts/ ./scripts/
 COPY --from=web-build --chown=node:node /app/web/dist ./web/dist
@@ -21,4 +22,4 @@ RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["node", "scripts/health-check.mjs"]
-CMD ["node", "src/server.js"]
+CMD ["./node_modules/.bin/pm2-runtime", "ecosystem.config.cjs"]

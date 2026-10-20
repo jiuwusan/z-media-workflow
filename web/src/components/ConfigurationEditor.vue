@@ -1,9 +1,13 @@
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount } from 'vue';
-import { ElMessage } from 'element-plus';
-import { api } from '../api/index.js';
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
+import { useRouter } from 'vue-router';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { api, setSession } from '../api/index.js';
 const loading = ref(false), saving = ref(false), loaded = ref(false), error = ref(''), revision = ref(''), restartRequired = ref(false), tab = ref('connections'), confirmPassword = ref('');
 const form = reactive({}), secretFields = ref({});
+const runtime = ref(null), restarting = ref(false), savedForm = ref(''), router = useRouter();
+const dirty = computed(() => loaded.value && JSON.stringify(form) !== savedForm.value);
+let active = true, restartAbort;
 const groups = [
   { name: 'connections', title: '服务连接', fields: [
     ['QBT_URL', 'qBittorrent 地址'], ['QBT_API_KEY', 'qBittorrent API 密钥', 'secret'], ['JELLYFIN_URL', 'Jellyfin 地址'], ['JELLYFIN_API_KEY', 'Jellyfin API 密钥', 'secret'], ['DEEPSEEK_URL', 'DeepSeek 地址'], ['DEEPSEEK_API_KEY', 'DeepSeek API 密钥', 'secret'], ['DEEPSEEK_MODEL', 'DeepSeek 模型']
@@ -23,15 +27,19 @@ function apply(view) {
   for (const key of Object.keys(form)) delete form[key];
   Object.assign(form, view.values); secretFields.value = view.secretFields; clearSecrets();
   revision.value = view.revision; restartRequired.value = view.restartRequired; loaded.value = true;
+  savedForm.value = JSON.stringify(form);
 }
 async function load() {
   loading.value = true; loaded.value = false; error.value = '';
-  try { apply(await api('/config', { quiet: true })); }
+  try {
+    const [view, status] = await Promise.all([api('/config', { quiet: true }), api('/service/status', { quiet: true })]);
+    apply(view); runtime.value = status;
+  }
   catch (e) { error.value = e.message; }
   finally { loading.value = false; }
 }
 async function save() {
-  if (!loaded.value || loading.value || saving.value) return;
+  if (!loaded.value || loading.value || saving.value || restarting.value) return;
   error.value = '';
   if (form.ADMIN_PASSWORD && form.ADMIN_PASSWORD !== confirmPassword.value) { error.value = '两次输入的管理员密码不一致'; tab.value = 'account'; return; }
   saving.value = true;
@@ -39,10 +47,36 @@ async function save() {
   catch (e) { error.value = e.message; }
   finally { saving.value = false; }
 }
+async function restart() {
+  if (!loaded.value || loading.value || saving.value || restarting.value || dirty.value || !runtime.value?.supported) return;
+  try {
+    await ElMessageBox.confirm('将重启服务以加载已保存配置。任务历史和登录会话会清空，服务恢复后需要重新登录。继续？', '重启服务', { confirmButtonText: '确认重启', cancelButtonText: '取消', type: 'warning' });
+  } catch { return; }
+  if (!active) return;
+  restarting.value = true; error.value = ''; restartAbort = new AbortController();
+  try {
+    const accepted = await api('/service/restart', { method: 'POST', body: { revision: revision.value }, quiet: true });
+    const deadline = Date.now() + 60000;
+    while (active && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (!active) return;
+      try {
+        const response = await fetch('/health', { cache: 'no-store', signal: AbortSignal.any([restartAbort.signal, AbortSignal.timeout(2000)]) });
+        if (!response.ok) continue;
+        const result = (await response.json()).data;
+        if (result?.status === 'ok' && result.instanceId && result.instanceId !== accepted.instanceId) {
+          clearSecrets(); setSession(null); await router.replace('/login'); return;
+        }
+      } catch { /* The listener is briefly unavailable while PM2 starts the new process. */ }
+    }
+    if (active) throw new Error('暂未连接到重启后的服务，请稍后刷新；如果修改了监听地址或端口，请检查 Docker 端口映射及访问地址。');
+  } catch (e) { if (active) error.value = e.message; }
+  finally { if (active) restarting.value = false; }
+}
 function bounds(key) { return { PORT: [1, 65535], INGEST_RETRIES: [0, 5], MAX_JOBS: [10, 10000], MAX_QUEUE: [1, 1000], LIBRARY_REFRESH_WAIT_MS: [0, 100000000] }[key] ?? [1, 100000000]; }
 onMounted(load);
 
-onBeforeUnmount(clearSecrets);
+onBeforeUnmount(() => { active = false; restartAbort?.abort(); clearSecrets(); });
 </script>
 <template>
   <section class="panel" aria-label="基础配置表单">
@@ -50,8 +84,9 @@ onBeforeUnmount(clearSecrets);
     <div class="panel-body">
     <el-alert title="密码和密钥留空表示保留原值。保存后请重启服务，当前运行配置会继续使用至重启。" type="info" show-icon :closable="false" />
     <el-alert v-if="restartRequired" title="存在已保存但尚未生效的配置，请重启服务。" type="warning" show-icon :closable="false" />
+    <el-alert v-if="restarting" title="正在重启服务，请稍候。恢复后将进入登录页。" type="info" show-icon :closable="false" />
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
-    <el-form label-position="top" :disabled="!loaded || loading || saving" class="configuration-form" @submit.prevent="save">
+    <el-form label-position="top" :disabled="!loaded || loading || saving || restarting" class="configuration-form" @submit.prevent="save">
       <el-tabs v-model="tab"><el-tab-pane v-for="group in groups" :key="group.name" :label="group.title" :name="group.name">
         <div class="configuration-fields"><el-row :gutter="16"><el-col v-for="[key, label, type] in group.fields" :key="key" :xs="24" :sm="12">
           <el-form-item :label="label">
@@ -63,7 +98,9 @@ onBeforeUnmount(clearSecrets);
         </el-col></el-row></div>
       </el-tab-pane></el-tabs>
     </el-form>
-    <div class="configuration-actions"><el-button :disabled="loading || saving" @click="load">重新读取</el-button><el-button type="primary" :disabled="!loaded || loading" :loading="saving" @click="save">保存基础配置</el-button></div>
+    <p v-if="loaded && !runtime?.supported" class="muted">当前服务未由 PM2 管理，无法从页面重启。请使用 PM2 启动服务。</p>
+    <p v-else-if="dirty" class="muted">有未保存的修改，请先保存配置，再重启服务。</p>
+    <div class="configuration-actions"><el-button :disabled="loading || saving || restarting" @click="load">重新读取</el-button><el-button type="warning" :disabled="!loaded || loading || saving || dirty || !runtime?.supported" :loading="restarting" @click="restart">重启服务</el-button><el-button type="primary" :disabled="!loaded || loading || restarting" :loading="saving" @click="save">保存基础配置</el-button></div>
     </div>
   </section>
 </template>

@@ -7,7 +7,7 @@ services:
     volumes:
       - workflow-data:/app/data
     restart: always
-    stop_grace_period: 35s
+    stop_grace_period: 45s
     logging:
       driver: json-file
       options:

@@ -34,7 +34,7 @@ npm start
 
 ## Docker Compose 部署
 
-参考 `senior-buyer`，使用 `jiuwusan/z-media-workflow:latest` 镜像、外部 `wk` 网络和 `restart: always`。镜像基于 Node.js 22，分阶段构建 Vue 面板及后端生产依赖，由非 root 用户运行 Koa，内置 `/health` 健康检查。管理面板和 API 共用一个容器，宿主机默认端口为 **3000**。
+参考 `senior-buyer`，使用 `jiuwusan/z-media-workflow:latest` 镜像、外部 `wk` 网络和 `restart: always`。镜像基于 Node.js 22，分阶段构建 Vue 面板及后端生产依赖，由非 root 用户通过 `pm2-runtime` 以单进程 fork 模式运行 Koa，内置 `/health` 健康检查。管理面板和 API 共用一个容器，宿主机默认端口为 **3000**。
 
 部署机器只需 Docker Engine / Docker Desktop、Compose v2 和 `docker-compose.yml`，无需 `.env` 或预先复制配置文件。启动容器后打开面板，按首次运行引导填写并保存。已有持久卷中的 `/app/data/config.json` 时直接使用。Compose 固定镜像、端口和停止等待时间；需要调整时直接编辑 YAML 对应字段。
 
@@ -86,6 +86,10 @@ GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker com
 - 种子通知：设置新增种子和下载完成通知，生成回调命令。
 
 初始化完成后，可进入左侧“基础配置”后直接编辑表单中的服务连接、管理员账号、面板/监听地址、认证开关、目录映射和运行参数。已保存的密码和 API 密钥不会回传到页面，输入框留空表示保留原值；修改管理员密码需要再次确认，至少 8 位。配置保存到同一 `data/config.json`，基础配置需重启服务生效，页面会持续提示尚未生效的改动；重启后使用新账号登录。连接检查使用当前运行配置，保存后尚未重启时仍检查原连接。清理文件删除开关继续即时生效。
+
+在容器内由 PM2 管理时，“基础配置”页面可点击“重启服务”。请先保存所有修改，再确认重启；有排队、执行中、待确认的工作流或正在执行的种子清理时会拒绝重启。接口校验当前已保存的配置版本并停止接收新任务，先返回响应，再让应用优雅退出，由 PM2 自动拉起新的应用进程，容器本身继续运行。页面只有检测到新的进程实例就绪后才跳转登录页，旧进程的健康响应不会被误判为成功。任务历史和登录会话在重启后清空，媒体游标及保存的 JSON 配置保留。页面未保存的修改不会随重启生效。
+
+Docker 入口使用 `ecosystem.config.cjs`（`instances: 1`、`exec_mode: fork`、`watch: false`、`autorestart: true`），不使用多进程/集群模式，以保持内存任务队列、游标及会话一致。PM2 设置 `max_memory_restart: 256M`，应用进程 RSS 内存超过 256 MiB 时自动重启；PM2 默认约每 30 秒检查一次，因此不是达到阈值瞬间触发的硬内存限制。内存触发的重启由 PM2 直接执行，不经过页面的任务检查；应用仍尝试优雅关闭，但超时未完成的工作流、待确认结果、任务历史和登录会话不跨重启保留，已保存的 JSON 配置及媒体游标保留。PM2 停止等待时间为 35 秒，Compose 停止等待时间为 45 秒；修改 `SHUTDOWN_TIMEOUT_MS` 时应同步调整这两个等待时间。镜像升级到 PM2 版本需要重建容器一次，之后普通配置变更可直接在页面重启应用。直接 `npm start` 或 `npm run dev` 不受 PM2 管理，页面会禁用重启按钮；Linux 下也可用 `npm run start:pm2` 启动。PM2 进程元数据仅用于识别运行方式，业务配置仍只读取 `data/config.json`。修改 `HOST`、`PORT` 或代理地址时，仍需同步更新 Docker 端口映射/反向代理并使用正确的新地址；页面等待恢复最多 60 秒，超时会提示检查服务。
 
 配置编辑不依赖三方连接检查成功，连接错误时仍可打开并修正配置。读取与保存仅允许已登录管理员，保存需要 CSRF 校验。配置在编辑期间被其他页面或清理设置修改时，拒绝覆盖并提示重新读取。
 
@@ -285,6 +289,8 @@ scripts/          通知与只读联通检查
 | POST | `/api/workflows/check-torrents` | 管理员检查单个种子 `{ hash }`；仅检查已配置剧集分类的种子 |
 | POST | `/api/connections/check` | 三方只读连接检查 |
 | GET | `/api/notifications/context` | 管理员读取当前运行中的新增/完成回调地址与认证开关 |
+| GET | `/api/service/status` | 管理员读取当前进程实例、PM2 重启支持情况及重启状态 |
+| POST | `/api/service/restart` | 管理员及 CSRF 校验，提交 `{ revision }` 重启已保存的配置，返回 202 |
 | GET / PUT | `/api/config` | 脱敏读取/保存基础配置，写入 `{ values, revision }`，返回是否需要重启 |
 | GET / PUT | `/api/qbittorrent/naming-settings` | 读取/保存命名检查剧集分类 `{ seriesCategories }`，即时生效 |
 | GET | `/api/qbittorrent/torrents` | 按添加时间倒序分页读取种子列表 |

@@ -14,6 +14,58 @@ import { CleanupSettingsStore } from '../src/util/cleanup-settings.js';
 import { MediaLibraryService } from '../src/service/media-library.js';
 import { MediaCursorStore } from '../src/util/media-cursor.js';
 import { WorkflowService } from '../src/service/workflow.js';
+import { LifecycleService } from '../src/service/lifecycle.js';
+
+test('configuration restart waits for a new PM2 worker, rejects unsaved changes and returns to login', { timeout: 60000 }, async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'media-restart-ui-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const filename = path.join(root, 'config.json');
+  writeConfigFile(filename, { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'restart-ui-password', QBT_API_KEY: 'mock-qbt', JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_API_KEY: 'mock-deep' });
+  const config = loadConfig(filename);
+  const workflow = { stopping: false, summary: () => ({ counts: {}, queued: 0, running: false }) };
+  let calls = 0, finishRestart;
+  const lifecycle = new LifecycleService({ managed: true, shutdown: async () => {
+    calls++;
+    await new Promise(resolve => { finishRestart = () => { lifecycle.instanceId = 'new-pm2-worker'; lifecycle.pending = false; workflow.stopping = false; resolve(); }; });
+  } });
+  lifecycle.supported = false;
+  const server = createApp({ config, services: { workflow, mediaLibrary: { libraries: async () => [] } }, lifecycle }).listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve)); t.after(() => { finishRestart?.(); server.close(); });
+  let executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+  if (!executablePath && process.platform === 'win32') { const edge = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'; try { await access(edge); executablePath = edge; } catch {} }
+  const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) }); t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } }), errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}/configuration`);
+  await page.getByRole('textbox', { name: '用户名', exact: true }).fill(config.adminUsername);
+  await page.getByRole('textbox', { name: '密码', exact: true }).fill(config.adminPassword);
+  await page.getByRole('button', { name: '进入管理面板' }).click();
+  await page.getByRole('button', { name: '展开导航', exact: true }).click();
+  await page.getByRole('link', { name: '基础配置', exact: true }).click();
+  await page.getByText('当前服务未由 PM2 管理，无法从页面重启。请使用 PM2 启动服务。', { exact: true }).waitFor();
+  const button = page.getByRole('button', { name: '重启服务', exact: true });
+  assert.equal(await button.isDisabled(), true);
+  lifecycle.supported = true; await page.reload();
+  await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(button => button.textContent.trim() === '重启服务' && !button.disabled));
+  await page.getByRole('textbox', { name: 'DeepSeek 模型', exact: true }).fill('saved-before-restart');
+  await page.getByText('有未保存的修改，请先保存配置，再重启服务。', { exact: true }).waitFor();
+  assert.equal(await button.isDisabled(), true);
+  await page.getByRole('button', { name: '保存基础配置', exact: true }).click();
+  await page.getByText('存在已保存但尚未生效的配置，请重启服务。', { exact: true }).waitFor();
+  await button.click();
+  const confirmation = page.getByRole('dialog', { name: '重启服务', exact: true });
+  await confirmation.getByRole('button', { name: '取消', exact: true }).click(); assert.equal(calls, 0);
+  await button.click(); await confirmation.getByRole('button', { name: '确认重启', exact: true }).click();
+  await page.getByText('正在重启服务，请稍候。恢复后将进入登录页。', { exact: true }).waitFor();
+  const health = await page.waitForResponse(response => response.url().endsWith('/health'));
+  assert.equal((await health.json()).data.instanceId, lifecycle.instanceId);
+  assert.equal(new URL(page.url()).pathname, '/configuration'); assert.equal(calls, 1);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await mkdir('.test-artifacts', { recursive: true }); await page.screenshot({ path: '.test-artifacts/configuration-restarting-mobile.png', fullPage: true, animations: 'disabled' });
+  finishRestart();
+  await page.getByRole('heading', { name: '登录工作空间', exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/login'); assert.deepEqual(errors, []);
+});
 
 test('media library supports manual correction while preserving filters, sort and page', { timeout: 60000 }, async t => {
   const libraries = [{ ItemId: 'movies', Name: '电影库', CollectionType: 'movies', Locations: ['/media/movies'] }];
