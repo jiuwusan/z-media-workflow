@@ -20,9 +20,10 @@ export class WorkflowService {
     this.started = true;
     try {
       if (this.repository.runningActions().length) {
+        this.recovering = true;
         this.startPromise = recoverRunningActions({ repository: this.repository, services: this.services, sourceScope: this.scope })
-          .then(() => { this.ready = true; return this.drain(); })
-          .catch(error => { this.storageError = error; this.ready = false; });
+          .then(() => { this.recovering = false; this.ready = true; return this.drain(); })
+          .catch(error => { this.recovering = false; this.storageError = error; this.ready = false; });
       } else { this.ready = true; this.startPromise = this.drain(); }
     } catch (error) { this.storageError = error; this.ready = false; }
     return this.startPromise;
@@ -32,7 +33,7 @@ export class WorkflowService {
   list(input) { return this.repository.list(input); }
   summary() { return { ...this.repository.summary(), running: this.running }; }
   ensureCapacity() {
-    if (this.stopping || this.storageError) throw new AppError('服务正在关闭或持久层不可用', 503);
+    if (this.stopping || this.storageError || (this.autoStart && !this.ready)) throw new AppError('服务正在关闭或持久层尚未就绪', 503);
     for (const key of ['maxJobs', 'maxQueue', 'jobTtlMs']) if (this.config[key] != null) this.repository.limits[key] = this.config[key];
     this.repository.capacity();
   }
@@ -294,8 +295,8 @@ export class WorkflowService {
   }
   async close(timeoutMs = 30000) {
     this.stopping = true; const end = Date.now() + timeoutMs;
-    while (this.running && Date.now() < end) await sleep(25);
-    return !this.running;
+    while ((this.running || this.recovering) && Date.now() < end) await sleep(25);
+    return !this.running && !this.recovering;
   }
 }
 

@@ -4,7 +4,12 @@ import { log } from '../util/logger.js';
 export function lifecycleController(services) {
   const lifecycle = services.lifecycle;
   return {
-    health(ctx) { ctx.body = { data: { status: lifecycle.pending ? 'restarting' : 'ok', instanceId: lifecycle.instanceId } }; },
+    health(ctx) {
+      const workflow = services.workflow;
+      const status = workflow?.storageError ? 'unavailable' : workflow?.ready === false ? 'starting' : lifecycle.pending ? 'restarting' : 'ok';
+      if (['unavailable', 'starting'].includes(status)) ctx.status = 503;
+      ctx.body = { data: { status, instanceId: lifecycle.instanceId } };
+    },
     status(ctx) { ctx.body = { data: lifecycle.status() }; },
     restart(ctx) {
       const body = ctx.request.body;

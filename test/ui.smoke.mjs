@@ -247,8 +247,9 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   const config = loadConfig(filename);
   config.mediaCursorFile = path.join(cursorDir, 'cursors.json');
   config.configFile = path.join(cursorDir, 'config.json');
-  t.after(() => rm(cursorDir, { recursive: true, force: true }));
-  const services = createServices(config), server = createApp({ config, services }).listen(0, '127.0.0.1');
+  let closeServices; t.after(async () => { await closeServices?.(); await rm(cursorDir, { recursive: true, force: true }); });
+  const services = createServices(config); closeServices = () => services.close(1000);
+  const server = createApp({ config, services }).listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r)); t.after(() => server.close()); config.publicUrl = `http://127.0.0.1:${server.address().port}/`;
   let executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
   if (!executablePath && process.platform === 'win32') { const edge = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'; try { await access(edge); executablePath = edge; } catch {} }

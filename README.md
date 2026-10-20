@@ -1,10 +1,10 @@
 # z-media-workflow
 
-Koa + Vue 3 媒体工作流与中文管理面板，无数据库。qBittorrent RSS 下载完成后发送回调，服务只向种子视频文件所属的 Jellyfin 媒体库提交增量刷新，按配置等待（默认 10 秒）后检查所有电影、电视剧库中的待识别媒体，使用 DeepSeek 从电视剧文件夹或电影文件名中提取名称及可选年份，调用 Jellyfin 搜索并优先应用规则唯一匹配的候选；无法确定时由 AI 判断候选，仍无法确定时临时应用第一个有效且年份匹配的候选。通过元数据更新接口保存所选名称、年份和外部 ID 后即完成，再将元数据刷新加入 Jellyfin 队列，不等待刮削和图片加载结束。
+Koa + Vue 3 媒体工作流与中文管理面板，使用 SQLite 持久化任务。qBittorrent RSS 下载完成后发送回调，服务只向种子视频文件所属的 Jellyfin 媒体库提交增量刷新，按配置等待（默认 10 秒）后检查所有电影、电视剧库中的待识别媒体，使用 DeepSeek 从电视剧文件夹或电影文件名中提取名称及可选年份，调用 Jellyfin 搜索并优先应用规则唯一匹配的候选；无法确定时由 AI 判断候选，仍无法确定时临时应用第一个有效且年份匹配的候选。通过元数据更新接口保存所选名称、年份和外部 ID 后即完成，再将元数据刷新加入 Jellyfin 队列，不等待刮削和图片加载结束。
 
 ## 本地启动
 
-需要 Node.js 22+。在项目根目录执行：
+需要 Node.js 22.13.0+。在项目根目录执行：
 
 ```powershell
 npm ci
@@ -57,7 +57,7 @@ docker compose logs -f --tail=100
 
 GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker compose up -d` 更新服务。查看三方连接可执行 `docker compose exec z-media-workflow npm run check:connections`。
 
-服务通过远程 API 操作媒体，无需挂载媒体目录。Compose 将 `workflow-data` 命名卷挂载到 `/app/data`，更新镜像或重建容器后保留配置和游标；`docker compose down -v` 会删除该卷。修改容器配置时可先 `docker cp z-media-workflow:/app/data/config.json ./config.json`，停服务后编辑并复制回同一路径，再重启；复制回后确保 `node` 用户可读。日志输出到 Docker，单个日志文件最多 10 MB，保留 3 个。任务记录和登录会话保存在内存，重启后重新登录；默认关闭等待为 30 秒，调整 JSON 中的 `SHUTDOWN_TIMEOUT_MS` 时应将 Compose 的 `stop_grace_period` 设置得更长。
+服务通过远程 API 操作媒体，无需挂载媒体目录。Compose 将 `workflow-data` 命名卷挂载到 `/app/data`，更新镜像或重建容器后保留配置、游标及 SQLite 工作流数据；`docker compose down -v` 会删除该卷。修改容器配置时可先 `docker cp z-media-workflow:/app/data/config.json ./config.json`，停服务后编辑并复制回同一路径，再重启；复制回后确保 `node` 用户可读。日志输出到 Docker，单个日志文件最多 10 MB，保留 3 个。任务记录、候选和队列保存在配置目录的 `workflow.sqlite`，登录会话仍在内存，重启后重新登录；默认关闭等待为 30 秒，调整 JSON 中的 `SHUTDOWN_TIMEOUT_MS` 时应将 Compose 的 `stop_grace_period` 设置得更长。
 
 ## GitHub Actions 发布镜像
 
@@ -87,9 +87,9 @@ GitHub Actions 发布新镜像后，执行 `docker compose pull` 和 `docker com
 
 初始化完成后，可进入左侧“基础配置”后直接编辑表单中的服务连接、管理员账号、面板/监听地址、认证开关、目录映射和运行参数。已保存的密码和 API 密钥不会回传到页面，输入框留空表示保留原值；修改管理员密码需要再次确认，至少 8 位。配置保存到同一 `data/config.json`，基础配置需重启服务生效，页面会持续提示尚未生效的改动；重启后使用新账号登录。连接检查使用当前运行配置，保存后尚未重启时仍检查原连接。清理文件删除开关继续即时生效。
 
-在容器内由 PM2 管理时，“基础配置”页面可点击“重启服务”。请先保存所有修改，再确认重启；有排队、执行中、待确认的工作流或正在执行的种子清理时会拒绝重启。接口校验当前已保存的配置版本并停止接收新任务，先返回响应，再让应用优雅退出，由 PM2 自动拉起新的应用进程，容器本身继续运行。页面只有检测到新的进程实例就绪后才跳转登录页，旧进程的健康响应不会被误判为成功。任务历史和登录会话在重启后清空，媒体游标及保存的 JSON 配置保留。页面未保存的修改不会随重启生效。
+在容器内由 PM2 管理时，“基础配置”页面可点击“重启服务”。请先保存所有修改，再确认重启；有排队、执行中、待确认的工作流或正在执行的种子清理时会拒绝重启。接口校验当前已保存的配置版本并停止接收新任务，先返回响应，再让应用优雅退出，由 PM2 自动拉起新的应用进程，容器本身继续运行。页面只有检测到新的进程实例就绪后才跳转登录页，旧进程的健康响应不会被误判为成功。任务历史、候选、排队操作、媒体游标及保存的 JSON 配置保留，登录会话失效。页面未保存的修改不会随重启生效。
 
-Docker 入口使用 `ecosystem.config.cjs`（`instances: 1`、`exec_mode: fork`、`watch: false`、`autorestart: true`），不使用多进程/集群模式，以保持内存任务队列、游标及会话一致。PM2 设置 `max_memory_restart: 256M`，应用进程 RSS 内存超过 256 MiB 时自动重启；PM2 默认约每 30 秒检查一次，因此不是达到阈值瞬间触发的硬内存限制。内存触发的重启由 PM2 直接执行，不经过页面的任务检查；应用仍尝试优雅关闭，但超时未完成的工作流、待确认结果、任务历史和登录会话不跨重启保留，已保存的 JSON 配置及媒体游标保留。PM2 停止等待时间为 35 秒，Compose 停止等待时间为 45 秒；修改 `SHUTDOWN_TIMEOUT_MS` 时应同步调整这两个等待时间。镜像升级到 PM2 版本需要重建容器一次，之后普通配置变更可直接在页面重启应用。直接 `npm start` 或 `npm run dev` 不受 PM2 管理，页面会禁用重启按钮；Linux 下也可用 `npm run start:pm2` 启动。PM2 进程元数据仅用于识别运行方式，业务配置仍只读取 `data/config.json`。修改 `HOST`、`PORT` 或代理地址时，仍需同步更新 Docker 端口映射/反向代理并使用正确的新地址；页面等待恢复最多 60 秒，超时会提示检查服务。
+Docker 入口使用 `ecosystem.config.cjs`（`instances: 1`、`exec_mode: fork`、`watch: false`、`autorestart: true`），不使用多进程/集群模式，以确保工作流只有一个队列消费者。PM2 设置 `max_memory_restart: 256M`，应用进程 RSS 内存超过 256 MiB 时自动重启；PM2 默认约每 30 秒检查一次，因此不是达到阈值瞬间触发的硬内存限制。内存触发的重启由 PM2 直接执行，不经过页面的任务检查；应用仍尝试优雅关闭，超时未完成的工作流在下次启动时核对外部状态，执行结果不明确的写入保留为中断任务等待处理；排队操作、待确认结果和历史持久保留，登录会话失效。PM2 停止等待时间为 35 秒，Compose 停止等待时间为 45 秒；修改 `SHUTDOWN_TIMEOUT_MS` 时应同步调整这两个等待时间。镜像升级到 PM2 版本需要重建容器一次，之后普通配置变更可直接在页面重启应用。直接 `npm start` 或 `npm run dev` 不受 PM2 管理，页面会禁用重启按钮；Linux 下也可用 `npm run start:pm2` 启动。PM2 进程元数据仅用于识别运行方式，业务配置仍只读取 `data/config.json`。修改 `HOST`、`PORT` 或代理地址时，仍需同步更新 Docker 端口映射/反向代理并使用正确的新地址；页面等待恢复最多 60 秒，超时会提示检查服务。
 
 配置编辑不依赖三方连接检查成功，连接错误时仍可打开并修正配置。读取与保存仅允许已登录管理员，保存需要 CSRF 校验。配置在编辑期间被其他页面或清理设置修改时，拒绝覆盖并提示重新读取。
 
@@ -193,7 +193,7 @@ curl -q --fail --show-error --connect-timeout 5 --max-time 15 http://172.29.0.1:
 
 ### Node.js 通知（可选）
 
-在 **qBittorrent 所在机器/容器** 部署 `scripts/notify-completed.mjs`（只依赖 Node.js 22+，无需安装 npm 包）。复制 `scripts/config.notify.example.json` 为脚本同目录的 `config.json`，或在通知命令末尾追加 `--config /实际路径/config.json`。脚本只读取 JSON，填写：
+在 **qBittorrent 所在机器/容器** 部署 `scripts/notify-completed.mjs`（只依赖 Node.js 22.13.0+，无需安装 npm 包）。复制 `scripts/config.notify.example.json` 为脚本同目录的 `config.json`，或在通知命令末尾追加 `--config /实际路径/config.json`。脚本只读取 JSON，填写：
 
 ```json
 {
@@ -336,3 +336,13 @@ npm run check:connections
 单元/API 测试和浏览器测试使用本地 mock，不更改实际 RSS 或 Jellyfin 元数据。`check:connections` 只读查询版本、可用模型、库及媒体回读，不调用模型生成，不触发扫描。浏览器测试默认使用本机 Edge，可通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定 Chromium；没有浏览器时执行 `npx playwright install chromium`。
 
 官方接口参考：[qBittorrent API key](https://github.com/qbittorrent/wiki/blob/master/API-Key-Authentication-%28%E2%89%A5v5.2.0%29.md)、[qBittorrent WebAPI](https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-%28qBittorrent-5.0%29)、[Jellyfin API](https://api.jellyfin.org/)、[DeepSeek chat completions](https://api-docs.deepseek.com/api/create-chat-completion/)。
+
+## 工作流持久化
+
+使用 Node >=22.13.0 内置的 node:sqlite（Node 22 中仍属实验性接口），无需额外数据库服务。数据库固定在配置文件目录的 workflow.sqlite，Docker 下为 /app/data/workflow.sqlite，使用现有数据卷；配置和媒体游标仍使用原 JSON 文件。WAL 模式、FULL 同步，列表由 SQL 分页读取，不将全部历史常驻内存。单任务扫描及 HTTP 缓冲仍会占用内存，256M 的 PM2 保护继续生效。
+
+排队操作保存成功后才返回接受响应；重启后顺序恢复。人工候选 ID 和选择保留，纠错依旧需要手动确认。执行中的修改先核对 Jellyfin 元数据或 qBittorrent 文件索引/路径，已生效则补齐本地收尾，结果不明确时标记中断，重试也先核对。正常识别仍以成功提交为完成，不等待 Jellyfin 后台元数据加载。切换服务地址后旧历史可读，但旧动作不能向新服务执行。
+
+沿用 MAX_JOBS、MAX_QUEUE、JOB_TTL_MS；待确认、执行中和未解决写入意图不会被自动清理。达到容量时需处理这些任务，重启不再清空记录。首次升级只能创建空数据库，此前保存在内存中的历史无法迁移；现有配置和游标不变。数据库损坏、无法写入或结构版本过高时明确失败，不降级到内存模式。
+
+备份时停止服务并备份整个 data 目录，包括数据库、可能存在的 -wal/-shm 文件、配置和游标；不要在服务运行中仅复制 workflow.sqlite。恢复时一起还原这些文件，并确认 node 用户可读写。回滚前使用升级前备份，旧版本不能读取持久队列。

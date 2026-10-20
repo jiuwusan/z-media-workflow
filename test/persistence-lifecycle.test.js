@@ -1,0 +1,50 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { createServices } from '../src/service/index.js';
+import { validateConfig } from '../src/config/index.js';
+import { createApp } from '../src/app.js';
+import { WorkflowService } from '../src/service/workflow.js';
+import { persistenceFixture, scope } from './helpers/persistence.js';
+test('production service assembly reopens the database beside config and rejects old sessions', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'workflow-lifecycle-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const config = validateConfig({ ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'test-password', QBT_API_KEY: 'mockqbt', JELLYFIN_API_KEY: 'mockjelly', DEEPSEEK_API_KEY: 'mockdeep' }, path.join(dir, 'config.json'));
+  const a = createServices(config);
+  const session = await a.auth.login(config.adminUsername, config.adminPassword, '127.0.0.1');
+  const job = a.workflow.repository.accept({ input: { dryRun: true }, sourceScope: a.workflow.scope });
+  const action = a.workflow.repository.claimNext(); job.status = 'needs_review'; job.items = [{ itemId: 'm', status: 'needs_review', candidates: [{ candidateId: 'stable' }] }];
+  a.workflow.repository.save(job, { actionId: action.id, actionStatus: 'completed' });
+  await a.close(1000);
+  assert.ok(existsSync(path.join(dir, 'workflow.sqlite')));
+  const b = createServices(config);
+  assert.equal(b.workflow.get(job.id).items[0].candidates[0].candidateId, 'stable');
+  assert.equal(b.workflow.get(job.id).status, 'needs_review');
+  assert.equal(b.auth.session(session.id), undefined);
+  await b.close(1000);
+});
+test('unready storage reports unavailable health and rejects workflow writes', async t => {
+  const config = { adminUsername: 'admin', adminPassword: 'test-password', sessionMs: 60000, trustProxy: false, webhookAuthRequired: false };
+  const workflow = new WorkflowService(config, {});
+  workflow.ready = false; workflow.storageError = Error('disk full');
+  const server = createApp({ config, services: { workflow, mediaLibrary: {} } }).listen(0, '127.0.0.1');
+  await new Promise(r => server.once('listening', r)); t.after(() => server.close());
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
+  assert.equal(response.status, 503); assert.equal((await response.json()).data.status, 'unavailable');
+  const submitted = await fetch(`http://127.0.0.1:${server.address().port}/api/webhooks/qbittorrent/completed`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hash: 'a'.repeat(40) }) });
+  assert.equal(submitted.status, 503); assert.equal(workflow.list().total, 0);
+  await workflow.close(); workflow.repository.database.close();
+});
+
+test('shutdown does not report drained while startup reconciliation is still reading a target', async t => {
+  const { repository } = persistenceFixture(t);
+  const job = repository.accept({ input: {}, sourceScope: scope }); repository.claimNext();
+  job.items = [{ itemId: 'm', status: 'running', phase: 'prepared', intent: { kind: 'jellyfin.apply', target: { itemId: 'm' }, expected: {} } }]; repository.save(job);
+  let release; const blocked = new Promise(resolve => { release = resolve; });
+  const workflow = new WorkflowService(scope, { mediaLibrary: { ensureItem: async () => { await blocked; throw Error('offline'); } } }, { repository });
+  assert.equal(await workflow.close(1), false);
+  release(); await workflow.startPromise;
+  assert.equal(await workflow.close(1000), true);
+});

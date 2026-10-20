@@ -50,7 +50,7 @@ async function save() {
 async function restart() {
   if (!loaded.value || loading.value || saving.value || restarting.value || dirty.value || !runtime.value?.supported) return;
   try {
-    await ElMessageBox.confirm('将重启服务以加载已保存配置。任务历史和登录会话会清空，服务恢复后需要重新登录。继续？', '重启服务', { confirmButtonText: '确认重启', cancelButtonText: '取消', type: 'warning' });
+    await ElMessageBox.confirm('将重启服务以加载已保存配置。任务记录和候选结果会保留，登录会话失效，服务恢复后需要重新登录。继续？', '重启服务', { confirmButtonText: '确认重启', cancelButtonText: '取消', type: 'warning' });
   } catch { return; }
   if (!active) return;
   restarting.value = true; error.value = ''; restartAbort = new AbortController();
