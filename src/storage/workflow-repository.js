@@ -19,7 +19,7 @@ export class WorkflowRepository {
   }
   list({ page = 1, pageSize = 20 } = {}) {
     this.prune();
-    return { items: this.db.prepare('SELECT payload, item_count FROM workflow_jobs ORDER BY sequence DESC LIMIT ? OFFSET ?').all(pageSize, (page - 1) * pageSize).map(r => ({ ...JSON.parse(r.payload), itemCount: r.item_count })), total: this.db.prepare('SELECT count(*) AS n FROM workflow_jobs').get().n, page, pageSize };
+    return { items: this.db.prepare("SELECT json_remove(payload, '$.recovery') AS payload, item_count FROM workflow_jobs ORDER BY sequence DESC LIMIT ? OFFSET ?").all(pageSize, (page - 1) * pageSize).map(r => ({ ...JSON.parse(r.payload), itemCount: r.item_count })), total: this.db.prepare('SELECT count(*) AS n FROM workflow_jobs').get().n, page, pageSize };
   }
   summary() {
     const counts = Object.fromEntries(this.db.prepare('SELECT status, count(*) AS n FROM workflow_jobs GROUP BY status').all().map(r => [r.status, r.n]));

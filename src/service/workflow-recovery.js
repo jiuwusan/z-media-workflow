@@ -50,6 +50,7 @@ export async function recoverRunningActions({ repository, services, sourceScope 
   for (const action of repository.runningActions()) {
     const job = repository.get(action.jobId);
     for (const old of job.recovery ?? []) if (!job.items.some(i => i.itemId === old.itemId)) job.items.push(old);
+    delete job.recovery;
     for (const entry of job.items) {
       if (entry.status === 'completed' || (entry.status === 'needs_review' && !entry.intent)) continue;
       if (!sameScope(job.sourceScope, sourceScope)) { interrupt(entry, '任务来源服务地址已变化，请重新发起操作'); continue; }

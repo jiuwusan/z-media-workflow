@@ -9,6 +9,9 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DEFAULT_CONFIG } from '../src/config/index.js';
+import { createServer as createHttpServer } from 'node:http';
+import { openWorkflowDatabase } from '../src/storage/database.js';
+import { WorkflowRepository, sourceScope } from '../src/storage/workflow-repository.js';
 
 test('PM2 keeps its runtime alive while the page restart loads saved config into a new worker', { timeout: 90000 }, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'media-pm2-'));
@@ -18,9 +21,18 @@ test('PM2 keeps its runtime alive while the page restart loads saved config into
   const pm2Path = path.resolve('node_modules/pm2/bin/pm2');
   const reserve = createServer().listen(0, '127.0.0.1'); await once(reserve, 'listening');
   const port = reserve.address().port; await new Promise(resolve => reserve.close(resolve));
-  const document = { ...DEFAULT_CONFIG, HOST: '127.0.0.1', PORT: port, ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'pm2-restart-test-password', QBT_API_KEY: 'mock-qbt', JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_API_KEY: 'mock-deep' };
+  let torrentReads = 0;
+  const upstream = createHttpServer((_req, res) => { torrentReads++; res.setHeader('Content-Type', 'application/json'); res.end('[]'); }).listen(0, '127.0.0.1');
+  await once(upstream, 'listening'); t.after(() => new Promise(resolve => upstream.close(resolve)));
+  const document = { ...DEFAULT_CONFIG, HOST: '127.0.0.1', PORT: port, QBT_URL: `http://127.0.0.1:${upstream.address().port}/`, ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'pm2-restart-test-password', QBT_API_KEY: 'mock-qbt', JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_API_KEY: 'mock-deep' };
   await mkdir(path.join(root, 'data'));
   await writeFile(path.join(root, 'data/config.json'), JSON.stringify(document));
+  const dbFile = path.join(root, 'data/workflow.sqlite');
+  const db = openWorkflowDatabase(dbFile), repo = new WorkflowRepository(db), scope = sourceScope({ jellyfinUrl: document.JELLYFIN_URL, qbtUrl: document.QBT_URL });
+  const history = repo.accept({ input: { dryRun: true }, sourceScope: scope }), historyAction = repo.claimNext();
+  history.status = 'completed'; history.items = [{ itemId: 'm', status: 'completed', candidates: [{ candidateId: 'stable-history', Name: '电影' }] }];
+  repo.save(history, { actionId: historyAction.id, actionStatus: 'completed' });
+  const queued = repo.accept({ input: { checkExisting: true, event: 'added' }, sourceScope: scope }); db.close();
   const ecosystem = createRequire(import.meta.url)('../ecosystem.config.cjs');
   const app = { ...ecosystem.apps[0], cwd: root, script: path.resolve('src/server.js'), out_file: path.join(root, 'stdout.log'), error_file: path.join(root, 'stderr.log') };
   assert.equal(app.instances, 1); assert.equal(app.exec_mode, 'fork'); assert.equal(app.autorestart, true);
@@ -54,6 +66,13 @@ test('PM2 keeps its runtime alive while the page restart loads saved config into
   }
   const before = await waitReady();
   const headers = await login();
+  for (let i = 0; i < 50; i++) {
+    const job = (await (await fetch(`${base}/api/workflows/${queued.id}`, { headers })).json()).data;
+    if (job.status === 'completed') break;
+    await delay(100);
+  }
+  assert.equal((await (await fetch(`${base}/api/workflows/${queued.id}`, { headers })).json()).data.status, 'completed');
+  assert.equal(torrentReads, 1);
   const status = (await (await fetch(`${base}/api/service/status`, { headers })).json()).data;
   assert.equal(status.supported, true);
   const config = (await (await fetch(`${base}/api/config`, { headers })).json()).data;
@@ -68,4 +87,17 @@ test('PM2 keeps its runtime alive while the page restart loads saved config into
   const newHeaders = await login();
   const loaded = (await (await fetch(`${base}/api/config`, { headers: newHeaders })).json()).data;
   assert.equal(loaded.values.DEEPSEEK_MODEL, 'restarted-model'); assert.equal(loaded.restartRequired, false);
+  const restored = (await (await fetch(`${base}/api/workflows/${history.id}`, { headers: newHeaders })).json()).data;
+  assert.equal(restored.items[0].candidates[0].candidateId, 'stable-history'); assert.equal(torrentReads, 1);
+  const liveDb = openWorkflowDatabase(dbFile), liveRepo = new WorkflowRepository(liveDb);
+  const review = liveRepo.accept({ input: { correction: true }, sourceScope: scope }), reviewAction = liveRepo.claimNext();
+  review.status = 'needs_review'; review.items = [{ itemId: 'review', status: 'needs_review', candidates: [{ candidateId: 'stable-review', Name: '待纠错' }] }];
+  liveRepo.save(review, { actionId: reviewAction.id, actionStatus: 'completed' }); liveDb.close();
+  const blocked = await fetch(`${base}/api/service/restart`, { method: 'POST', headers: newHeaders, body: JSON.stringify({ revision: loaded.revision }) });
+  assert.equal(blocked.status, 409);
+  const pm2Restart = spawn(process.execPath, [pm2Path, 'restart', 'z-media-workflow'], { cwd: root, env, windowsHide: true, stdio: 'ignore' });
+  await once(pm2Restart, 'exit'); await waitReady(after.instanceId);
+  const finalHeaders = await login();
+  const retained = (await (await fetch(`${base}/api/workflows/${review.id}`, { headers: finalHeaders })).json()).data;
+  assert.equal(retained.status, 'needs_review'); assert.equal(retained.items[0].candidates[0].candidateId, 'stable-review');
 });

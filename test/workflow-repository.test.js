@@ -49,3 +49,11 @@ test('action failure rolls back acceptance; confirm is atomic and preserves sele
   assert.equal(repo.claimNext().payload.candidate.Name, 'chosen');
 });
 
+test('list summaries never expose recovery candidate payloads', t => {
+  const { repository: repo } = persistenceFixture(t);
+  const job = repo.accept({ input: {}, sourceScope: scope });
+  job.recovery = [{ itemId: 'large', candidates: [{ candidateId: 'private-detail' }] }]; repo.save(job);
+  assert.equal(repo.list().items[0].recovery, undefined);
+  assert.equal(repo.get(job.id).recovery[0].itemId, 'large');
+});
+

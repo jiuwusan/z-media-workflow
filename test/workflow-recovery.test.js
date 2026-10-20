@@ -72,3 +72,12 @@ test('rename reconciliation matches stable file index and refuses collisions or 
   files = []; assert.equal((await reconcileIntent(rename, services)).state, 'conflict');
   files = [{ index: 0, name: 'S01E01.mkv' }]; category = 'other'; assert.equal((await reconcileIntent(rename, services)).state, 'conflict');
 });
+
+test('completed startup reconciliation retires duplicate preflight recovery snapshots', async t => {
+  const { repository } = persistenceFixture(t);
+  const job = repository.accept({ input: {}, sourceScope: scope }); repository.claimNext();
+  job.recovery = [{ itemId: 'm', status: 'failed', intent, phase: 'prepared' }]; repository.save(job);
+  await recoverRunningActions({ repository, services: servicesFor({ ...original, ...candidate }), sourceScope: scope });
+  assert.equal(repository.get(job.id).recovery, undefined);
+  assert.equal(repository.get(job.id).items[0].phase, 'completed');
+});
