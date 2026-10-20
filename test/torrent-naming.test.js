@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { episodeFilename, renamedEpisodePath } from '../src/util/torrent-naming.js';
 import { TorrentNamingService } from '../src/service/torrent-naming.js';
 import { DeepseekService } from '../src/service/deepseek.js';
+import { WorkflowService } from '../src/service/workflow.js';
 
 const source = 'Journey.to.the.West.II.E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv';
 const target = 'Journey.to.the.West.S02E01.1998.TVB.WEB-DL.1080p.H264.AAC.2Audio-HDCTV.mkv';
@@ -54,6 +55,46 @@ test('rename intent is committed before the remote call and completed after read
   await f.service.run(f.job, () => {}, job => saved.push(structuredClone(job)));
   assert.equal(f.calls(), 1); assert.equal(saved.at(-1).items[0].phase, 'completed');
   assert.equal(saved.at(-1).items[0].status, 'completed');
+});
+
+test('retry skips previously completed file indexes even if an external actor reverted their names', async () => {
+  const f = fixture();
+  f.setFiles([{ index: 0, name: source }, { index: 1, name: 'Show.E02.mkv' }]);
+  f.ai.identifySeason = async () => ({ season: 1, removeTitleSuffix: null, confidence: 'high', reason: 'season one' });
+  const wf = new WorkflowService(f.service.config, { torrentNaming: f.service, qbittorrent: f.qbt });
+  const repo = wf.repository;
+  const parent = repo.accept({ input: f.job.input, sourceScope: wf.scope }), action = repo.claimNext();
+  parent.status = 'failed'; parent.items = [
+    { itemId: `${f.job.input.hash}:0`, type: 'File', status: 'completed' },
+    { itemId: `${f.job.input.hash}:1`, type: 'File', status: 'failed', torrentHash: f.job.input.hash, path: 'Show.E02.mkv' }
+  ];
+  repo.save(parent, { actionId: action.id, actionStatus: 'failed' });
+  const retry = wf.retry(parent.id); await wf.close();
+  assert.equal(wf.get(retry.id).status, 'completed');
+  assert.equal((await f.qbt.files()).find(i => i.index === 0).name, source);
+  assert.equal((await f.qbt.files()).find(i => i.index === 1).name, 'Show.S01E02.mkv');
+  wf.repository.database.close();
+});
+
+test('interrupted file without an intent can retry its season decision and rename', async () => {
+  const f = fixture(), wf = new WorkflowService(f.service.config, { torrentNaming: f.service, qbittorrent: f.qbt });
+  const repo = wf.repository, parent = repo.accept({ input: f.job.input, sourceScope: wf.scope }), action = repo.claimNext();
+  parent.status = 'failed'; parent.items = [{ itemId: `${f.job.input.hash}:0`, type: 'File', path: source, status: 'failed', recoveryState: 'interrupted' }];
+  repo.save(parent, { actionId: action.id, actionStatus: 'failed' });
+  const retry = wf.retry(parent.id); await wf.close();
+  assert.equal(wf.get(retry.id).status, 'completed'); assert.equal((await f.qbt.files())[0].name, target);
+  repo.database.close();
+});
+
+test('successful batch preflight retires a prior torrent-level failure', async () => {
+  const f = fixture(), files = f.qbt.files;
+  f.job.input.checkExisting = true;
+  f.qbt.torrents = async () => [{ hash: f.job.input.hash, name: 'Show', category: 'series' }];
+  f.qbt.files = async () => { throw Error('temporary read error'); };
+  await f.service.run(f.job, () => {}); assert.equal(f.job.items[0].status, 'failed');
+  f.qbt.files = files; await f.service.run(f.job, () => {});
+  assert.equal(f.job.items.some(i => i.status === 'failed'), false);
+  assert.equal(f.job.items.some(i => i.itemId.endsWith(':torrent')), false);
 });
 test('configured series categories use exact case-insensitive names for checks and rename revalidation', async () => {
   const f = fixture({ torrent: async () => ({ name: 'Show', category: 'TV' }) });

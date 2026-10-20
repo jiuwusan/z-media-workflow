@@ -49,7 +49,7 @@ export function summarizeJob(job) {
 export async function recoverRunningActions({ repository, services, sourceScope }) {
   for (const action of repository.runningActions()) {
     const job = repository.get(action.jobId);
-    for (const old of job.recovery ?? []) if (!job.items.some(i => i.itemId === old.itemId)) job.items.push(old);
+    for (const old of [...(job.recovery ?? []), ...(action.payload.recovery ?? [])]) if (!job.items.some(i => i.itemId === old.itemId)) job.items.push(old);
     delete job.recovery;
     for (const entry of job.items) {
       if (entry.status === 'completed' || (entry.status === 'needs_review' && !entry.intent)) continue;
@@ -62,6 +62,9 @@ export async function recoverRunningActions({ repository, services, sourceScope 
       } else interrupt(entry, result.reason ?? '操作尚未完成，请检查后重试');
     }
     summarizeJob(job);
+    if (['run', 'retry'].includes(action.kind) && !job.input.correction && !job.discoveryComplete && job.status === 'completed') {
+      job.status = 'failed'; job.stage = '读取范围时中断，请重试以检查剩余条目';
+    }
     if (job.status !== 'completed') { job.recoveryState = 'interrupted'; job.error = sameScope(job.sourceScope, sourceScope) ? '服务退出导致执行中断，请检查条目后重试' : '任务来源服务地址已变化，请重新发起操作'; }
     repository.save(job, { actionId: action.id, actionStatus: job.status === 'completed' ? 'completed' : 'failed' });
   }

@@ -24,8 +24,19 @@ export class TorrentNamingService {
     if (!Array.isArray(torrents)) throw new AppError('qBittorrent 种子列表无效', 502);
     const targets = torrents.filter(torrent => isSeriesCategory(torrent.category, this.config));
     for (const torrent of targets) {
+      const itemId = `${torrent.hash}:torrent`;
+      if (!job.items.some(i => i.itemId === itemId)) job.items.push({ itemId, torrentHash: torrent.hash, torrentName: torrent.name, type: 'File', originalName: torrent.name ?? torrent.hash, path: '', status: 'queued' });
+    }
+    job.discoveryComplete = true; checkpoint(job);
+    for (const torrent of targets) {
       try { await this.checkTorrent(job, torrent.hash, update, checkpoint); }
-      catch (error) { job.items.push({ itemId: `${torrent.hash}:torrent`, torrentHash: torrent.hash, torrentName: torrent.name, type: 'File', originalName: torrent.name ?? torrent.hash, path: '', status: 'failed', error: redact(error.message, this.secrets) }); }
+      catch (error) {
+        const existing = job.items.find(i => i.itemId === `${torrent.hash}:torrent`);
+        const entry = existing ?? { itemId: `${torrent.hash}:torrent`, torrentHash: torrent.hash, torrentName: torrent.name, type: 'File', originalName: torrent.name ?? torrent.hash, path: '' };
+        entry.status = 'failed'; entry.error = redact(error.message, this.secrets);
+        if (!existing) job.items.push(entry);
+        checkpoint(job);
+      }
     }
     job.message = targets.length ? `已检查 ${targets.length} 个已配置剧集分类的种子` : '没有属于已配置剧集分类的已有种子';
   }
@@ -33,13 +44,25 @@ export class TorrentNamingService {
     update(job, '检查种子分类');
     const torrent = await this.qbt.torrent(hash);
     if (!isSeriesCategory(torrent.category, this.config)) {
+      job.items = job.items.filter(i => i.itemId !== `${hash}:torrent`);
+      if (!job.input.checkExisting) job.discoveryComplete = true;
+      checkpoint(job);
       if (!job.input.checkExisting) job.message = '种子分类不属于已配置的剧集分类，已跳过文件检查';
       return;
     }
     update(job, '等待种子文件列表');
     const files = await this.filesReady(hash);
+    job.items = job.items.filter(i => i.itemId !== `${hash}:torrent`);
+    for (const file of files) {
+      const itemId = `${hash}:${file.index}`;
+      if (!episodeFilename(file.name) || job.skipItemIds?.includes(itemId) || job.items.some(i => i.itemId === itemId)) continue;
+      job.items.push({ itemId, torrentHash: hash, torrentName: torrent.name, type: 'File', originalName: file.name, path: file.name, status: 'queued' });
+    }
+    if (!job.input.checkExisting) job.discoveryComplete = true;
+    checkpoint(job);
     const decisions = new Map();
     for (const file of files) {
+      if (job.skipItemIds?.includes(`${hash}:${file.index}`)) continue;
       const parsed = episodeFilename(file.name);
       if (!parsed) continue;
       const existing = job.items.find(i => i.itemId === `${hash}:${file.index}`);

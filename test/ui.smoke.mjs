@@ -156,6 +156,21 @@ test('media library supports manual correction while preserving filters, sort an
   await dialog.screenshot({ path: '.test-artifacts/library-correction-mobile.png', animations: 'disabled' });
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   assert.equal(writes.length, 1); assert.deepEqual(cursor.state, cursorBefore); assert.deepEqual(errors, []);
+  const repo = services.workflow.repository;
+  const mixed = repo.accept({ input: { dryRun: true }, sourceScope: services.workflow.scope }), action = repo.claimNext();
+  mixed.status = 'needs_review'; mixed.recoveryState = 'interrupted';
+  mixed.items = [
+    { itemId: 'done', originalName: '已完成', source: 'Done', type: 'Movie', path: '/done.mkv', status: 'completed', candidates: [] },
+    { itemId: 'review', originalName: '待确认', source: 'Review', type: 'Movie', path: '/review.mkv', status: 'needs_review', candidates: [{ candidateId: 'retained', Name: '保留候选', ProductionYear: 2020, ProviderIds: { Tmdb: '1' } }] },
+    { itemId: 'interrupted', originalName: '中断条目', source: 'Interrupted', type: 'Movie', path: '/failed.mkv', status: 'failed', recoveryState: 'interrupted', error: '执行结果待核对', candidates: [] }
+  ];
+  repo.save(mixed, { actionId: action.id, actionStatus: 'failed' });
+  await page.goto(`http://127.0.0.1:${server.address().port}/jobs/${mixed.id}`);
+  await page.getByText('执行结果待核对', { exact: true }).waitFor();
+  await page.getByRole('heading', { name: '保留候选', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '重试任务', exact: true }).isVisible(), true);
+  assert.equal(await page.getByRole('button', { name: '确认此候选', exact: true }).isEnabled(), true);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 });
 test('first-run wizard saves config, handles validation and remains disabled after reload', { timeout: 60000 }, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'workflow-setup-ui-'));

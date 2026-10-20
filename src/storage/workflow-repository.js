@@ -43,7 +43,9 @@ export class WorkflowRepository {
       const dedupe = input.hash ? JSON.stringify([scope.qbtUrl, input.hash, input.event ?? 'completed']) : input.checkExisting ? JSON.stringify([scope.qbtUrl, 'checkExisting']) : null;
       if (dedupe && !parentJobId && !recovery.length) {
         const row = this.db.prepare(`SELECT id FROM workflow_jobs WHERE dedupe_key=? AND
-          (status IN ('queued','running') OR (protected=1 AND status='failed') OR (?=0 AND status!='failed'))
+          (status IN ('queued','running') OR (protected=1 AND status='failed')
+          OR EXISTS (SELECT 1 FROM workflow_items i WHERE i.job_id=workflow_jobs.id AND COALESCE(i.phase,'')!='completed' AND json_type(i.payload,'$.intent')='object')
+          OR (?=0 AND status!='failed'))
           ORDER BY sequence DESC LIMIT 1`).get(dedupe, Number(Boolean(options.recheck || input.checkExisting)));
         if (row) return this.get(row.id);
       }

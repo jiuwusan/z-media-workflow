@@ -57,3 +57,15 @@ test('list summaries never expose recovery candidate payloads', t => {
   assert.equal(repo.get(job.id).recovery[0].itemId, 'large');
 });
 
+test('explicit recheck cannot bypass an unresolved write in a mixed review task', t => {
+  const { repository: repo } = persistenceFixture(t);
+  const input = { hash: 'c'.repeat(40), event: 'added' };
+  const job = repo.accept({ input, sourceScope: scope }), action = repo.claimNext();
+  job.status = 'needs_review'; job.items = [
+    { itemId: 'review', status: 'needs_review' },
+    { itemId: 'unknown', status: 'failed', phase: 'prepared', intent: { kind: 'qbt.rename' } }
+  ];
+  repo.save(job, { actionId: action.id, actionStatus: 'completed' });
+  assert.equal(repo.accept({ input, sourceScope: scope, options: { recheck: true } }).id, job.id);
+});
+

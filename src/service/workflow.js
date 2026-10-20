@@ -35,14 +35,18 @@ export class WorkflowService {
   ensureCapacity() {
     if (this.stopping || this.storageError || (this.autoStart && !this.ready)) throw new AppError('服务正在关闭或持久层尚未就绪', 503);
     for (const key of ['maxJobs', 'maxQueue', 'jobTtlMs']) if (this.config[key] != null) this.repository.limits[key] = this.config[key];
-    this.repository.capacity();
   }
   enqueue(input = {}, recovery = [], options = {}) {
     this.ensureCapacity();
     const job = this.persist(() => this.repository.accept({ input: this.sanitize(input), recovery: this.sanitize(recovery), options, sourceScope: this.scope, parentJobId: options.parentJobId }));
     if (this.ready) this.drain(); return this.get(job.id);
   }
-  sanitize(value) { return JSON.parse(redact(JSON.stringify(value), this.secrets)); }
+  sanitize(value) {
+    if (typeof value === 'string') return redact(value, this.secrets);
+    if (Array.isArray(value)) return value.map(v => this.sanitize(v));
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, v]) => [key, this.sanitize(v)]));
+    return value;
+  }
   persist(fn) {
     try { return fn(); } catch (error) {
       if (!error.status) { this.storageError = error; this.ready = false; log('workflow.storage.failed', { message: redact(error.message, this.secrets) }); }
@@ -59,7 +63,12 @@ export class WorkflowService {
         const action = this.persist(() => this.repository.claimNext()); if (!action) break;
         const job = this.get(action.jobId);
         try { await this.dispatch(action, job); this.finish(job); }
-        catch (error) { if (this.storageError) break; job.error = redact(error.message, this.secrets); this.update(job, '失败', 'failed'); }
+        catch (error) {
+          if (this.storageError) break;
+          job.error = redact(error.message, this.secrets);
+          for (const entry of job.items) if (['queued', 'running'].includes(entry.status)) { entry.status = 'failed'; entry.error = job.error; }
+          this.update(job, '失败', 'failed');
+        }
         this.persist(() => this.repository.save(this.sanitize(job), { actionId: action.id, actionStatus: job.status === 'failed' ? 'failed' : 'completed' }));
         log('workflow.finished', { jobId: job.id, status: job.status });
       }
@@ -81,9 +90,13 @@ export class WorkflowService {
           if (result.state !== 'unchanged') {
             entry.status = 'failed'; entry.error = result.reason; entry.recoveryState = 'interrupted'; job.items.push(entry); this.checkpoint(job); continue;
           }
-          if (job.input.correction) this.resolveParent(action.payload.parentJobId, { ...entry, phase: 'completed' });
-          delete entry.recoveryState;
+          if (job.input.correction) {
+            entry.status = 'needs_review'; entry.message = '原人工选择与候选已保留，请再次确认后应用';
+            delete entry.error; delete entry.recoveryState;
+            job.items.push(entry); this.checkpoint(job); continue;
+          }
         }
+        delete entry.recoveryState;
         pending.push(entry);
       }
       if (action.payload.recovery.length && !pending.length) return;
@@ -105,7 +118,9 @@ export class WorkflowService {
   }
   resolveParent(id, resolved) {
     if (!id) return;
-    const parent = this.get(id), entry = parent.items.find(i => i.itemId === resolved.itemId);
+    let parent;
+    try { parent = this.get(id); } catch (error) { if (error.status === 404) return; throw error; }
+    const entry = parent.items.find(i => i.itemId === resolved.itemId);
     if (entry) { Object.assign(entry, resolved); parent.updatedAt = new Date().toISOString(); }
     if (parent.recovery) parent.recovery = parent.recovery.filter(i => i.itemId !== resolved.itemId);
     this.checkpoint(parent);
@@ -116,9 +131,10 @@ export class WorkflowService {
     this.update(job, status === 'needs_review' ? '等待人工确认' : status === 'failed' ? '存在失败条目' : '完成', status);
   }
   async run(job, { scanLibrary = Boolean(job.input.hash), recovery = [], skipItemIds = [] } = {}) {
-    job.recovery = recovery; this.checkpoint(job);
+    job.recovery = recovery; job.skipItemIds = skipItemIds; this.checkpoint(job);
     if (job.input.correction) { const result = await this.runCorrection(job); delete job.recovery; return result; }
     if (job.input.event === 'added') {
+      job.skipItemIds = skipItemIds;
       for (const entry of recovery) if (!job.items.some(i => i.itemId === entry.itemId)) job.items.push(structuredClone(entry));
       await this.services.torrentNaming.run(job, (job, stage) => this.update(job, stage), job => this.checkpoint(job));
       for (const entry of job.items.filter(i => i.status === 'completed')) if (job.parentJobId) this.resolveParent(job.parentJobId, entry);
@@ -160,10 +176,11 @@ export class WorkflowService {
       if (!items.some(i => i.Id === previous.itemId)) items.push(await mediaLibrary.ensureItem(previous.itemId));
     }
     if (!items.length) { job.message = '目标范围内没有未识别媒体'; return; }
+    for (const item of items) job.items.push({ itemId: item.Id, libraryId: item.LibraryId, type: item.Type, originalName: item.Name, path: item.Path, source: mediaSource(item), status: 'queued', candidates: [] });
+    job.discoveryComplete = true; this.checkpoint(job);
     await mediaLibrary.track(items, job.input);
     for (const item of items) {
-      const entry = { itemId: item.Id, libraryId: item.LibraryId, type: item.Type, originalName: item.Name, path: item.Path, source: mediaSource(item), status: 'running', candidates: [] };
-      job.items.push(entry);
+      const entry = job.items.find(e => e.itemId === item.Id); entry.status = 'running';
       try {
         const previous = recovery.find(i => i.itemId === item.Id);
         if (previous && (previous.path !== item.Path || (previous.libraryId && previous.libraryId !== item.LibraryId))) throw new AppError('媒体路径或媒体库已变化，请重新扫描', 409);
@@ -255,6 +272,11 @@ export class WorkflowService {
     return selected;
   }
   async applyCandidate(job, entry, candidate) {
+    if (entry.intent && entry.phase !== 'completed') {
+      const result = await reconcileIntent(entry.intent, this.services);
+      if (result.state === 'matched') { await completeReconciled(job, entry, result.item, this.services); this.checkpoint(job); if (job.parentJobId) this.resolveParent(job.parentJobId, entry); return; }
+      if (result.state !== 'unchanged') throw new AppError(result.reason ?? '执行结果待核对', 409);
+    }
     entry.selectedCandidate = structuredClone(candidate);
     const item = await this.services.mediaLibrary.ensureItem(entry.itemId, { libraryId: entry.libraryId ?? job.input.libraryId, type: entry.type });
     if (item.Type !== entry.type) throw new AppError('媒体类型已变化，请重新扫描', 409);
@@ -281,7 +303,7 @@ export class WorkflowService {
     for (const entry of job.recovery ?? []) if (!failed.some(i => i.itemId === entry.itemId)) failed.push(entry);
     if (!['failed', 'needs_review'].includes(job.status) || (job.status !== 'failed' && !failed.length)) throw new AppError('仅失败任务或失败条目可以重试', 409);
     if (!sameScope(job.sourceScope, this.scope)) throw new AppError('任务来源服务地址已变化，请重新发起操作', 409);
-    return this.enqueue(job.input, failed, { scanLibrary: false, parentJobId: id, skipItemIds: job.items.filter(i => i.status !== 'failed').map(i => i.itemId) });
+    return this.enqueue(job.input, failed, { scanLibrary: false, parentJobId: id, skipItemIds: [...new Set([...(job.skipItemIds ?? []), ...job.items.filter(i => ['completed', 'needs_review'].includes(i.status)).map(i => i.itemId)])] });
   }
   confirm(id, itemId, candidateId) {
     this.ensureCapacity();

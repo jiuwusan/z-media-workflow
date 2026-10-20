@@ -18,6 +18,7 @@ test('media reconciliation requires full identity and expected metadata, without
 test('running media intent reconciles and repeats local cursor completion safely', async t => {
   const { repository } = persistenceFixture(t); let cursor = 0;
   const job = repository.accept({ input: {}, sourceScope: scope }), action = repository.claimNext();
+  job.discoveryComplete = true;
   job.items = [{ itemId: 'm', type: 'Movie', path: original.Path, libraryId: 'lib', status: 'running', phase: 'prepared', intent, candidates: [candidate] }];
   repository.save(job);
   const services = servicesFor({ ...original, ...candidate }); services.mediaLibrary.markIdentified = () => { cursor++; };
@@ -80,4 +81,12 @@ test('completed startup reconciliation retires duplicate preflight recovery snap
   await recoverRunningActions({ repository, services: servicesFor({ ...original, ...candidate }), sourceScope: scope });
   assert.equal(repository.get(job.id).recovery, undefined);
   assert.equal(repository.get(job.id).items[0].phase, 'completed');
+});
+
+test('startup recovers retry intents directly from the accepted action payload', async t => {
+  const { repository } = persistenceFixture(t);
+  const job = repository.accept({ input: {}, sourceScope: scope, parentJobId: 'old', recovery: [{ itemId: 'm', status: 'failed', phase: 'prepared', intent }] });
+  repository.claimNext();
+  await recoverRunningActions({ repository, services: servicesFor({ ...original, ...candidate }), sourceScope: scope });
+  assert.equal(repository.get(job.id).items[0]?.phase, 'completed');
 });
