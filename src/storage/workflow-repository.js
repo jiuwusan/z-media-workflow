@@ -6,7 +6,7 @@ export function sourceScope(config) {
   return { jellyfinUrl: normalize(config.jellyfinUrl), qbtUrl: normalize(config.qbtUrl) };
 }
 const timestamp = () => new Date().toISOString();
-const protectedJob = job => ['queued', 'running', 'needs_review'].includes(job.status) || job.items.some(i => i.intent && i.phase !== 'completed');
+const protectedJob = job => ['queued', 'running', 'needs_review'].includes(job.status) || [...job.items, ...(job.recovery ?? [])].some(i => i.intent && i.phase !== 'completed');
 export class WorkflowRepository {
   constructor(database, limits = {}) {
     this.database = database; this.db = database.connection;

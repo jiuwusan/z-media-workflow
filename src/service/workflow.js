@@ -5,6 +5,7 @@ import { compareProviderIdentity, hasChineseName, hasIdentity, isLaterSeasonCand
 import { log, redact } from '../util/logger.js';
 import { openWorkflowDatabase } from '../storage/database.js';
 import { WorkflowRepository, sourceScope } from '../storage/workflow-repository.js';
+import { recoverRunningActions, reconcileIntent, completeReconciled, sameScope } from './workflow-recovery.js';
 export class WorkflowService {
   constructor(config, services, { repository, autoStart = true } = {}) {
     this.config = config; this.services = services; this.running = false; this.stopping = false;
@@ -17,8 +18,14 @@ export class WorkflowService {
   async start() {
     if (this.started) return this.startPromise;
     this.started = true;
-    this.ready = true;
-    this.startPromise = this.drain(); return this.startPromise;
+    try {
+      if (this.repository.runningActions().length) {
+        this.startPromise = recoverRunningActions({ repository: this.repository, services: this.services, sourceScope: this.scope })
+          .then(() => { this.ready = true; return this.drain(); })
+          .catch(error => { this.storageError = error; this.ready = false; });
+      } else { this.ready = true; this.startPromise = this.drain(); }
+    } catch (error) { this.storageError = error; this.ready = false; }
+    return this.startPromise;
   }
   prune() { return this.repository.prune(); }
   get(id) { return this.repository.get(id); }
@@ -59,7 +66,27 @@ export class WorkflowService {
     finally { this.running = false; }
   }
   async dispatch(action, job) {
-    if (JSON.stringify(job.sourceScope) !== JSON.stringify(this.scope)) throw new AppError('任务来源服务地址已变化，请重新发起操作', 409);
+    if (!sameScope(job.sourceScope, this.scope)) throw new AppError('任务来源服务地址已变化，请重新发起操作', 409);
+    if (action.kind === 'retry') {
+      const pending = [];
+      for (const old of action.payload.recovery) {
+        const entry = structuredClone(old);
+        if (entry.intent && entry.phase !== 'completed') {
+          const result = await reconcileIntent(entry.intent, this.services);
+          if (result.state === 'matched') {
+            await completeReconciled(job, entry, result.item, this.services); job.items.push(entry); this.checkpoint(job);
+            this.resolveParent(action.payload.parentJobId, entry); continue;
+          }
+          if (result.state !== 'unchanged') {
+            entry.status = 'failed'; entry.error = result.reason; entry.recoveryState = 'interrupted'; job.items.push(entry); this.checkpoint(job); continue;
+          }
+          if (job.input.correction) this.resolveParent(action.payload.parentJobId, { ...entry, phase: 'completed' });
+        }
+        pending.push(entry);
+      }
+      if (action.payload.recovery.length && !pending.length) return;
+      action.payload.recovery = pending;
+    }
     if (['run', 'retry'].includes(action.kind)) return this.run(job, { ...action.payload.options, recovery: action.payload.recovery });
     const entry = job.items.find(i => i.itemId === action.payload.itemId);
     if (!entry) throw new AppError('待处理条目不存在', 404);
@@ -74,13 +101,21 @@ export class WorkflowService {
       await this.findCandidates(job, entry, item); entry.status = 'needs_review';
     } else throw new AppError('未知工作流动作', 409);
   }
+  resolveParent(id, resolved) {
+    if (!id) return;
+    const parent = this.get(id), entry = parent.items.find(i => i.itemId === resolved.itemId);
+    if (entry) { Object.assign(entry, resolved); parent.updatedAt = new Date().toISOString(); }
+    if (parent.recovery) parent.recovery = parent.recovery.filter(i => i.itemId !== resolved.itemId);
+    this.checkpoint(parent);
+    if (parent.parentJobId) this.resolveParent(parent.parentJobId, resolved);
+  }
   finish(job) {
     const status = job.items.some(i => i.status === 'needs_review') ? 'needs_review' : job.items.some(i => i.status === 'failed') ? 'failed' : 'completed';
     this.update(job, status === 'needs_review' ? '等待人工确认' : status === 'failed' ? '存在失败条目' : '完成', status);
   }
   async run(job, { scanLibrary = Boolean(job.input.hash), recovery = [], skipItemIds = [] } = {}) {
     job.recovery = recovery; this.checkpoint(job);
-    if (job.input.correction) return this.runCorrection(job);
+    if (job.input.correction) { const result = await this.runCorrection(job); delete job.recovery; return result; }
     if (job.input.event === 'added') {
       await this.services.torrentNaming.run(job, (job, stage) => this.update(job, stage), job => this.checkpoint(job));
       return;
@@ -111,7 +146,7 @@ export class WorkflowService {
     const items = []; let readCount = 0;
     for (let page = 1; ; page++) {
       const result = await mediaLibrary.unidentified({ ...job.input, page, pageSize: 200 });
-      items.push(...result.items.filter(i => !skipItemIds.includes(i.Id) && !job.items.some(e => e.itemId === i.Id && e.status === 'completed')));
+      items.push(...result.items.filter(i => !skipItemIds.includes(i.Id) && !job.items.some(e => e.itemId === i.Id)));
       readCount += result.items.length;
       if (readCount >= result.total || !result.items.length) break;
     }
@@ -221,11 +256,16 @@ export class WorkflowService {
     if (item.Path !== entry.path) throw new AppError('媒体路径已变化，请重新扫描', 409);
     this.update(job, `应用候选：${candidate.Name}`); entry.status = 'running';
     const { candidateId, ...remote } = candidate;
+    entry.intent = { kind: 'jellyfin.apply', sourceScope: this.scope, target: { itemId: entry.itemId, type: entry.type, libraryId: item.LibraryId, path: item.Path, before: { Name: item.Name, ProductionYear: item.ProductionYear, ProviderIds: item.ProviderIds } }, expected: remote };
+    entry.phase = 'prepared'; this.checkpoint(job);
     // Successful submission completes identification; Jellyfin loads metadata asynchronously.
     await this.services.jellyfin.apply(entry.itemId, remote, item);
+    entry.phase = 'verified'; this.checkpoint(job);
     if (!job.input.correction) this.services.mediaLibrary.markIdentified(item);
     entry.confirmed = { Name: remote.Name, ProductionYear: remote.ProductionYear, ProviderIds: structuredClone(remote.ProviderIds) };
-    entry.status = 'completed'; delete entry.error; delete entry.message;
+    entry.status = 'completed'; entry.phase = 'completed'; delete entry.error; delete entry.message;
+    this.checkpoint(job);
+    if (job.parentJobId) this.resolveParent(job.parentJobId, entry);
     this.update(job, '提交后台元数据刷新');
     try { await this.services.jellyfin.refreshItem(entry.itemId, { full: true }); }
     catch (error) { entry.refreshWarning = redact(error.message, this.secrets); }
@@ -235,7 +275,7 @@ export class WorkflowService {
     const job = this.get(id), failed = job.items.filter(i => i.status === 'failed');
     for (const entry of job.recovery ?? []) if (!failed.some(i => i.itemId === entry.itemId)) failed.push(entry);
     if (!['failed', 'needs_review'].includes(job.status) || (job.status !== 'failed' && !failed.length)) throw new AppError('仅失败任务或失败条目可以重试', 409);
-    if (JSON.stringify(job.sourceScope) !== JSON.stringify(this.scope)) throw new AppError('任务来源服务地址已变化，请重新发起操作', 409);
+    if (!sameScope(job.sourceScope, this.scope)) throw new AppError('任务来源服务地址已变化，请重新发起操作', 409);
     return this.enqueue(job.input, failed, { scanLibrary: false, parentJobId: id, skipItemIds: job.items.filter(i => i.status !== 'failed').map(i => i.itemId) });
   }
   confirm(id, itemId, candidateId) {
@@ -254,5 +294,6 @@ export class WorkflowService {
     return !this.running;
   }
 }
+
 
 
