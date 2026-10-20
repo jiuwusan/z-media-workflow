@@ -81,6 +81,7 @@ export class WorkflowService {
             entry.status = 'failed'; entry.error = result.reason; entry.recoveryState = 'interrupted'; job.items.push(entry); this.checkpoint(job); continue;
           }
           if (job.input.correction) this.resolveParent(action.payload.parentJobId, { ...entry, phase: 'completed' });
+          delete entry.recoveryState;
         }
         pending.push(entry);
       }
@@ -117,7 +118,10 @@ export class WorkflowService {
     job.recovery = recovery; this.checkpoint(job);
     if (job.input.correction) { const result = await this.runCorrection(job); delete job.recovery; return result; }
     if (job.input.event === 'added') {
+      for (const entry of recovery) if (!job.items.some(i => i.itemId === entry.itemId)) job.items.push(structuredClone(entry));
       await this.services.torrentNaming.run(job, (job, stage) => this.update(job, stage), job => this.checkpoint(job));
+      for (const entry of job.items.filter(i => i.status === 'completed')) if (job.parentJobId) this.resolveParent(job.parentJobId, entry);
+      delete job.recovery;
       return;
     }
     const { jellyfin, qbittorrent, mediaLibrary } = this.services;

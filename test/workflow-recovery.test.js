@@ -60,3 +60,15 @@ test('cursor failure retains an unresolved intent and correction recovery never 
   }
   assert.equal(calls, 1);
 });
+
+test('rename reconciliation matches stable file index and refuses collisions or changed categories', async () => {
+  const rename = { kind: 'qbt.rename', sourceScope: scope, target: { hash: 'h', index: 0, category: 'series' }, expected: { oldPath: 'old.mkv', newPath: 'S01E01.mkv' } };
+  let category = 'series', files = [{ index: 0, name: 'S01E01.mkv' }];
+  const services = { qbittorrent: { torrent: async () => ({ category }), files: async () => files } };
+  assert.equal((await reconcileIntent(rename, services)).state, 'matched');
+  files = [{ index: 0, name: 'old.mkv' }]; assert.equal((await reconcileIntent(rename, services)).state, 'unchanged');
+  files.push({ index: 1, name: 's01e01.MKV' }); assert.equal((await reconcileIntent(rename, services)).state, 'conflict');
+  files = [{ index: 0, name: 'else.mkv' }]; assert.equal((await reconcileIntent(rename, services)).state, 'conflict');
+  files = []; assert.equal((await reconcileIntent(rename, services)).state, 'conflict');
+  files = [{ index: 0, name: 'S01E01.mkv' }]; category = 'other'; assert.equal((await reconcileIntent(rename, services)).state, 'conflict');
+});

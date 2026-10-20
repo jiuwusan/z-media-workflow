@@ -42,6 +42,19 @@ test('added check renames via qBittorrent and repeated checks are idempotent', a
   assert.equal(f.calls(), 1); assert.equal(f.job.items[0].newPath, target); assert.equal(f.job.items[0].status, 'completed');
   f.job.items = []; await f.service.run(f.job, () => {}); assert.equal(f.calls(), 1);
 });
+
+test('rename intent is committed before the remote call and completed after readback', async () => {
+  const f = fixture(), saved = [];
+  const rename = f.qbt.renameFile;
+  f.qbt.renameFile = async (...args) => {
+    assert.equal(saved.at(-1).items[0].phase, 'prepared');
+    assert.equal(saved.at(-1).items[0].intent.expected.newPath, target);
+    await rename(...args); throw Error('response lost');
+  };
+  await f.service.run(f.job, () => {}, job => saved.push(structuredClone(job)));
+  assert.equal(f.calls(), 1); assert.equal(saved.at(-1).items[0].phase, 'completed');
+  assert.equal(saved.at(-1).items[0].status, 'completed');
+});
 test('configured series categories use exact case-insensitive names for checks and rename revalidation', async () => {
   const f = fixture({ torrent: async () => ({ name: 'Show', category: 'TV' }) });
   f.service.config.seriesCategories = ['tv', '电视剧'];

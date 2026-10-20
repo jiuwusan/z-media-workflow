@@ -9,6 +9,16 @@ export function matchesExpectedMedia(item, intent) {
 }
 export async function reconcileIntent(intent, services) {
   try {
+    if (intent.kind === 'qbt.rename') {
+      const { hash, index, category } = intent.target;
+      const torrent = await services.qbittorrent.torrent(hash);
+      if (torrent.category !== category) return { state: 'conflict', reason: '种子分类已变化，请重新检查' };
+      const files = await services.qbittorrent.files(hash), file = files.find(f => f.index === index);
+      if (!file) return { state: 'conflict', reason: '原文件索引不存在' };
+      if (files.some(f => f.index !== index && f.name.toLowerCase() === intent.expected.newPath.toLowerCase())) return { state: 'conflict', reason: '目标文件名已存在' };
+      if (file.name === intent.expected.newPath) return { state: 'matched', item: file };
+      return file.name === intent.expected.oldPath ? { state: 'unchanged', item: file } : { state: 'conflict', reason: '文件名已被其他操作修改' };
+    }
     if (intent.kind !== 'jellyfin.apply') return { state: 'unknown', reason: '暂不支持核对此操作' };
     const target = intent.target;
     const item = await services.mediaLibrary.ensureItem(target.itemId, { libraryId: target.libraryId, type: target.type });
