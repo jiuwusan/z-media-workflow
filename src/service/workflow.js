@@ -3,68 +3,89 @@ import { AppError } from '../util/error.js';
 import { sleep } from '../util/http.js';
 import { compareProviderIdentity, hasChineseName, hasIdentity, isLaterSeasonCandidate, mediaSource, movieSearchNames, selectCandidate, validateIdentity } from '../util/media.js';
 import { log, redact } from '../util/logger.js';
+import { openWorkflowDatabase } from '../storage/database.js';
+import { WorkflowRepository, sourceScope } from '../storage/workflow-repository.js';
 export class WorkflowService {
-  constructor(config, services) {
-    this.config = config; this.services = services; this.jobs = new Map(); this.recoveries = new Map(); this.queue = []; this.running = false; this.stopping = false;
+  constructor(config, services, { repository, autoStart = true } = {}) {
+    this.config = config; this.services = services; this.running = false; this.stopping = false;
+    this.repository = repository ?? new WorkflowRepository(openWorkflowDatabase(':memory:'), config);
+    this.ownsRepository = !repository; this.scope = sourceScope(config);
+    this.ready = false; this.started = false; this.autoStart = autoStart; this.storageError = null;
     this.secrets = [config.qbtKey, config.jellyfinKey, config.deepseekKey, config.adminPassword, config.workflowToken];
+    if (autoStart) this.start();
   }
-  prune() {
-    const terminal = [...this.jobs.values()].filter(j => !['queued', 'running', 'needs_review'].includes(j.status));
-    for (const job of terminal) if (Date.now() - Date.parse(job.updatedAt) > this.config.jobTtlMs) this.jobs.delete(job.id);
-    for (const job of terminal) { if (this.jobs.size < this.config.maxJobs) break; this.jobs.delete(job.id); }
-    for (const id of this.recoveries.keys()) if (!this.jobs.has(id)) this.recoveries.delete(id);
+  async start() {
+    if (this.started) return this.startPromise;
+    this.started = true;
+    this.ready = true;
+    this.startPromise = this.drain(); return this.startPromise;
   }
-  get(id) { const job = this.jobs.get(id); if (!job) throw new AppError('任务不存在或已过期', 404); return structuredClone(job); }
-  list({ page = 1, pageSize = 20 } = {}) {
-    this.prune(); const list = [...this.jobs.values()].reverse();
-    return { items: list.slice((page - 1) * pageSize, page * pageSize).map(({ items, ...j }) => ({ ...j, itemCount: items.length })), total: list.length, page, pageSize };
+  prune() { return this.repository.prune(); }
+  get(id) { return this.repository.get(id); }
+  list(input) { return this.repository.list(input); }
+  summary() { return { ...this.repository.summary(), running: this.running }; }
+  ensureCapacity() {
+    if (this.stopping || this.storageError) throw new AppError('服务正在关闭或持久层不可用', 503);
+    for (const key of ['maxJobs', 'maxQueue', 'jobTtlMs']) if (this.config[key] != null) this.repository.limits[key] = this.config[key];
+    this.repository.capacity();
   }
-  summary() {
-    const counts = {}; for (const j of this.jobs.values()) counts[j.status] = (counts[j.status] ?? 0) + 1;
-    return { counts, queued: this.queue.length, running: this.running };
-  }
-  ensureCapacity() { if (this.stopping) throw new AppError('服务正在关闭', 503); if (this.queue.length >= this.config.maxQueue) throw new AppError('任务队列已满，请稍后重试', 429); }
   enqueue(input = {}, recovery = [], options = {}) {
-    this.prune();
-    if (input.checkExisting) {
-      const existing = [...this.jobs.values()].find(j => j.input.checkExisting && ['queued', 'running'].includes(j.status));
-      if (existing) return this.get(existing.id);
-    }
-    if (input.hash && !recovery.length) {
-      const existing = [...this.jobs.values()].find(j => j.input.hash === input.hash && (j.input.event ?? 'completed') === (input.event ?? 'completed') && j.status !== 'failed' && (!options.recheck || ['queued', 'running'].includes(j.status)));
-      if (existing) return this.get(existing.id);
-    }
     this.ensureCapacity();
-    if (this.jobs.size >= this.config.maxJobs) throw new AppError('任务记录已达上限，请处理待确认任务或重启服务', 429);
-    const job = { id: randomUUID(), input: structuredClone(input), status: 'queued', stage: '排队', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), items: [] };
-    this.jobs.set(job.id, job);
-    if (recovery.length) this.recoveries.set(job.id, structuredClone(recovery));
-    this.queue.push({ job, action: () => this.run(job, options) }); this.drain(); return this.get(job.id);
+    const job = this.persist(() => this.repository.accept({ input: this.sanitize(input), recovery: this.sanitize(recovery), options, sourceScope: this.scope, parentJobId: options.parentJobId }));
+    if (this.ready) this.drain(); return this.get(job.id);
   }
-  update(job, stage, status) { job.stage = stage; if (status) job.status = status; job.updatedAt = new Date().toISOString(); }
-  async drain() {
-    if (this.running) return;
-    this.running = true;
-    while (this.queue.length) {
-      const { job, action } = this.queue.shift(); this.update(job, '处理', 'running');
-      try { await action(); this.finish(job); }
-      catch (error) { job.error = redact(error.message, this.secrets); this.update(job, '失败', 'failed'); }
-      log('workflow.finished', { jobId: job.id, status: job.status });
+  sanitize(value) { return JSON.parse(redact(JSON.stringify(value), this.secrets)); }
+  persist(fn) {
+    try { return fn(); } catch (error) {
+      if (!error.status) { this.storageError = error; this.ready = false; log('workflow.storage.failed', { message: redact(error.message, this.secrets) }); }
+      throw error;
     }
-    this.running = false;
+  }
+  checkpoint(job) { if (this.storageError) throw this.storageError; this.persist(() => this.repository.save(this.sanitize(job))); }
+  update(job, stage, status) { job.stage = stage; if (status) job.status = status; job.updatedAt = new Date().toISOString(); this.checkpoint(job); }
+  async drain() {
+    if (this.running || !this.ready || this.stopping) return;
+    this.running = true;
+    try {
+      while (!this.stopping && !this.storageError) {
+        const action = this.persist(() => this.repository.claimNext()); if (!action) break;
+        const job = this.get(action.jobId);
+        try { await this.dispatch(action, job); this.finish(job); }
+        catch (error) { if (this.storageError) break; job.error = redact(error.message, this.secrets); this.update(job, '失败', 'failed'); }
+        this.persist(() => this.repository.save(this.sanitize(job), { actionId: action.id, actionStatus: job.status === 'failed' ? 'failed' : 'completed' }));
+        log('workflow.finished', { jobId: job.id, status: job.status });
+      }
+    } catch (error) { if (!this.storageError) { this.storageError = error; this.ready = false; } }
+    finally { this.running = false; }
+  }
+  async dispatch(action, job) {
+    if (JSON.stringify(job.sourceScope) !== JSON.stringify(this.scope)) throw new AppError('任务来源服务地址已变化，请重新发起操作', 409);
+    if (['run', 'retry'].includes(action.kind)) return this.run(job, { ...action.payload.options, recovery: action.payload.recovery });
+    const entry = job.items.find(i => i.itemId === action.payload.itemId);
+    if (!entry) throw new AppError('待处理条目不存在', 404);
+    if (action.kind === 'confirm') {
+      entry.selectionMethod = 'manual'; delete entry.selectionWarning;
+      try { await this.applyCandidate(job, entry, action.payload.candidate); }
+      catch (error) { if (this.storageError) throw error; entry.status = 'failed'; entry.error = redact(error.message, this.secrets); }
+    } else if (action.kind === 'search') {
+      const item = await this.services.mediaLibrary.ensureItem(entry.itemId, { libraryId: entry.libraryId ?? job.input.libraryId, type: entry.type });
+      entry.identity = action.payload.identity;
+      for (const key of ['aiDecision', 'aiDecisionError', 'selectionMethod', 'selectionWarning']) delete entry[key];
+      await this.findCandidates(job, entry, item); entry.status = 'needs_review';
+    } else throw new AppError('未知工作流动作', 409);
   }
   finish(job) {
     const status = job.items.some(i => i.status === 'needs_review') ? 'needs_review' : job.items.some(i => i.status === 'failed') ? 'failed' : 'completed';
     this.update(job, status === 'needs_review' ? '等待人工确认' : status === 'failed' ? '存在失败条目' : '完成', status);
   }
-  async run(job, { scanLibrary = Boolean(job.input.hash) } = {}) {
+  async run(job, { scanLibrary = Boolean(job.input.hash), recovery = [], skipItemIds = [] } = {}) {
+    job.recovery = recovery; this.checkpoint(job);
     if (job.input.correction) return this.runCorrection(job);
     if (job.input.event === 'added') {
-      await this.services.torrentNaming.run(job, (job, stage) => this.update(job, stage));
-      this.recoveries.delete(job.id); return;
+      await this.services.torrentNaming.run(job, (job, stage) => this.update(job, stage), job => this.checkpoint(job));
+      return;
     }
     const { jellyfin, qbittorrent, mediaLibrary } = this.services;
-    const recovery = this.recoveries.get(job.id) ?? [];
     let torrent;
     if (job.input.hash) {
       this.update(job, '检查下载'); torrent = await qbittorrent.torrent(job.input.hash);
@@ -87,10 +108,12 @@ export class WorkflowService {
     this.update(job, '读取待识别媒体');
     // Download callbacks scan media beyond the workflow cursor, independently of torrent paths.
     // Explicit pagination also preserves the complete scope of manual scans.
-    const items = [];
+    const items = []; let readCount = 0;
     for (let page = 1; ; page++) {
-      const result = await mediaLibrary.unidentified({ ...job.input, page, pageSize: 200 }); items.push(...result.items);
-      if (items.length >= result.total || !result.items.length) break;
+      const result = await mediaLibrary.unidentified({ ...job.input, page, pageSize: 200 });
+      items.push(...result.items.filter(i => !skipItemIds.includes(i.Id) && !job.items.some(e => e.itemId === i.Id && e.status === 'completed')));
+      readCount += result.items.length;
+      if (readCount >= result.total || !result.items.length) break;
     }
     // Failed apply/verify entries are never skipped solely because ProviderIds now exist.
     for (const previous of recovery.filter(i => i.itemId)) {
@@ -141,7 +164,7 @@ export class WorkflowService {
       } catch (error) { entry.status = 'failed'; entry.error = redact(error.message, this.secrets); }
     }
     // Recovery is now represented in concrete item results; preflight failures retain it.
-    this.recoveries.delete(job.id);
+    delete job.recovery; this.checkpoint(job);
   }
   async runCorrection(job) {
     const item = await this.services.mediaLibrary.ensureItem(job.input.itemIds[0]);
@@ -149,7 +172,7 @@ export class WorkflowService {
     job.items.push(entry);
     await this.findCandidates(job, entry, item);
     entry.status = 'needs_review'; entry.message = '请选择正确候选，确认后才会更新媒体信息';
-    this.recoveries.delete(job.id);
+    this.checkpoint(job);
   }
   async findCandidates(job, entry, item) {
     delete entry.candidateSearchWarning;
@@ -208,30 +231,28 @@ export class WorkflowService {
     catch (error) { entry.refreshWarning = redact(error.message, this.secrets); }
   }
   retry(id) {
+    this.ensureCapacity();
     const job = this.get(id), failed = job.items.filter(i => i.status === 'failed');
-    for (const previous of this.recoveries.get(id) ?? []) if (!failed.some(i => i.itemId === previous.itemId && i.path === previous.path)) failed.push(previous);
+    for (const entry of job.recovery ?? []) if (!failed.some(i => i.itemId === entry.itemId)) failed.push(entry);
     if (!['failed', 'needs_review'].includes(job.status) || (job.status !== 'failed' && !failed.length)) throw new AppError('仅失败任务或失败条目可以重试', 409);
-    return this.enqueue(job.input, failed, { scanLibrary: false });
-  }
-  queueAction(job, action) {
-    this.ensureCapacity(); this.update(job, '排队', 'queued'); this.queue.push({ job, action }); this.drain(); return this.get(job.id);
-  }
-  reviewEntry(id, itemId) {
-    const job = this.jobs.get(id); if (!job) throw new AppError('任务不存在', 404);
-    if (job.status !== 'needs_review') throw new AppError('该任务当前不允许确认', 409);
-    const entry = job.items.find(i => i.itemId === itemId && i.status === 'needs_review');
-    if (!entry) throw new AppError('待确认媒体不存在', 404);
-    return { job, entry };
+    if (JSON.stringify(job.sourceScope) !== JSON.stringify(this.scope)) throw new AppError('任务来源服务地址已变化，请重新发起操作', 409);
+    return this.enqueue(job.input, failed, { scanLibrary: false, parentJobId: id, skipItemIds: job.items.filter(i => i.status !== 'failed').map(i => i.itemId) });
   }
   confirm(id, itemId, candidateId) {
-    const { job, entry } = this.reviewEntry(id, itemId), candidate = entry.candidates.find(c => c.candidateId === candidateId);
-    if (!candidate) throw new AppError('候选不存在，请重新加载任务');
-    return this.queueAction(job, async () => { try { entry.selectionMethod = 'manual'; delete entry.selectionWarning; await this.applyCandidate(job, entry, candidate); } catch (error) { entry.status = 'failed'; entry.error = redact(error.message, this.secrets); } });
+    this.ensureCapacity();
+    const job = this.persist(() => this.repository.enqueueAction(id, { kind: 'confirm', payload: { itemId, candidateId } }));
+    if (this.ready) this.drain(); return this.get(job.id);
   }
   search(id, itemId, identity) {
-    const { job, entry } = this.reviewEntry(id, itemId); const valid = validateIdentity(identity);
-    if (job.input.correction) job.input.identity = valid;
-    return this.queueAction(job, async () => { const item = await this.services.mediaLibrary.ensureItem(itemId, { libraryId: entry.libraryId ?? job.input.libraryId, type: entry.type }); entry.identity = valid; delete entry.aiDecision; delete entry.aiDecisionError; delete entry.selectionMethod; delete entry.selectionWarning; await this.findCandidates(job, entry, item); entry.status = 'needs_review'; });
+    this.ensureCapacity();
+    const job = this.persist(() => this.repository.enqueueAction(id, { kind: 'search', payload: { itemId, identity: validateIdentity(identity) } }));
+    if (this.ready) this.drain(); return this.get(job.id);
   }
-  async close(timeoutMs = 30000) { this.stopping = true; const end = Date.now() + timeoutMs; while (this.running && Date.now() < end) await sleep(25); return !this.running; }
+  async close(timeoutMs = 30000) {
+    this.stopping = true; const end = Date.now() + timeoutMs;
+    while (this.running && Date.now() < end) await sleep(25);
+    return !this.running;
+  }
 }
+
+
