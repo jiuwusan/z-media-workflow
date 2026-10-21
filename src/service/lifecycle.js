@@ -13,7 +13,7 @@ export class LifecycleService {
     const view = services.configuration.get();
     if (input.revision !== view.revision) throw new AppError('配置已被修改，请重新读取后再重启', 409);
     const summary = services.workflow?.summary();
-    if (summary?.running || summary?.queued || ['queued', 'running', 'needs_review'].some(status => summary?.counts?.[status])) throw new AppError('存在排队、执行中或待确认任务，请处理完任务后再重启', 409);
+    if (summary?.running || summary?.queued || ['queued', 'running'].some(status => summary?.counts?.[status])) throw new AppError('存在排队或执行中任务，请处理完任务后再重启', 409);
     if (services.qbittorrent?.cleanupRunning) throw new AppError('种子清理正在执行，请完成后再重启', 409);
     this.workflow = services.workflow;
     if (this.workflow?.stopping) throw new AppError('服务正在关闭', 503);

@@ -116,10 +116,14 @@ test('PM2 keeps its runtime alive while the page restart loads saved config into
   const review = liveRepo.accept({ input: { correction: true }, sourceScope: scope }), reviewAction = liveRepo.claimNext();
   review.status = 'needs_review'; review.items = [{ itemId: 'review', status: 'needs_review', candidates: [{ candidateId: 'stable-review', Name: '待纠错' }] }];
   liveRepo.save(review, { actionId: reviewAction.id, actionStatus: 'completed' }); liveDb.close();
-  const blocked = await fetch(`${base}/api/service/restart`, { method: 'POST', headers: newHeaders, body: JSON.stringify({ revision: loaded.revision }) });
-  assert.equal(blocked.status, 409);
+  const reviewRestart = await fetch(`${base}/api/service/restart`, { method: 'POST', headers: newHeaders, body: JSON.stringify({ revision: loaded.revision }) });
+  assert.equal(reviewRestart.status, 202);
+  const reviewReady = await waitReady(after.instanceId);
+  const reviewHeaders = await login();
+  const afterPageRestart = (await (await fetch(`${base}/api/workflows/${review.id}`, { headers: reviewHeaders })).json()).data;
+  assert.equal(afterPageRestart.status, 'needs_review');assert.equal(afterPageRestart.items[0].candidates[0].candidateId, 'stable-review');
   const pm2Restart = spawn(process.execPath, [pm2Path, 'restart', 'z-media-workflow'], { cwd: root, env, windowsHide: true, stdio: 'ignore' });
-  await once(pm2Restart, 'exit'); await waitReady(after.instanceId);
+  await once(pm2Restart, 'exit'); await waitReady(reviewReady.instanceId);
   const finalPasskey=(await readFile(path.join(root,'data/passkey'),'utf8')).trim();
   assert.notEqual(finalPasskey,restartedPasskey);
   assert.ok((await readFile(path.join(root,'stdout.log'),'utf8')).includes(finalPasskey),'external PM2 restart also rotates and logs the key');

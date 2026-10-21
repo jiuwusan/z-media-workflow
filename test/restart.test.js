@@ -25,9 +25,9 @@ function fixture(t, { managed = true, shutdown = async () => {} } = {}) {
 
 test('restart checks saved revision and rejects outstanding work without stopping the workflow', t => {
   const { lifecycle, services, input, state } = fixture(t);
-  for (const status of ['queued', 'running', 'needs_review']) {
-    state.counts = { [status]: 1 };
-    assert.throws(() => lifecycle.prepare(input(), services), e => e.status === 409);
+  for (const status of ['queued', 'running']) {
+    state.counts = { [status]: 1, needs_review: 1 };
+    assert.throws(() => lifecycle.prepare(input(), services), e => e.status === 409 && e.message === '存在排队或执行中任务，请处理完任务后再重启');
     assert.equal(services.workflow.stopping, false); assert.equal(lifecycle.pending, false);
   }
   state.counts = {}; state.running = true;
@@ -37,6 +37,15 @@ test('restart checks saved revision and rejects outstanding work without stoppin
   services.qbittorrent.cleanupRunning = false;
   assert.throws(() => lifecycle.prepare({ revision: 'stale' }, services), e => e.status === 409);
   assert.equal(services.workflow.stopping, false);
+});
+
+test('pending manual reviews allow restart and remain available for later confirmation', async t => {
+  let calls = 0;
+  const { lifecycle, services, input, state } = fixture(t, { shutdown: async () => { calls++; } });
+  state.counts = { needs_review: 2 };
+  assert.equal(lifecycle.prepare(input(), services).pending, true);
+  await lifecycle.launch();
+  assert.equal(calls, 1); assert.equal(state.counts.needs_review, 2);
 });
 
 test('restart is unavailable without PM2 and cannot silently stop a standalone server', t => {
