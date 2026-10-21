@@ -110,7 +110,7 @@ AI 仅从原始文件名或文件夹名清洗提取名称和年份，不借助�
 
 ## 已识别媒体游标
 
-本地默认文件为 `data/media-cursors.json`，可通过 `MEDIA_CURSOR_FILE` 修改；Compose 固定使用 `/app/data/media-cursors.json`。启动时读取一次到内存，更新后同步写入临时文件并替换原文件。文件损坏会阻止启动，避免静默重置游标。
+游标保存在 `data/workflow.sqlite`，与工作流完成状态一同事务提交。旧 `media-cursors.json` 不会自动读取，仅可在首次运行引导中粘贴完整内容并同步，也可跳过；初始化后不再提供同步入口。
 
 每个 Jellyfin 服务、媒体库和类型分别保存游标。剧集按“节目添加日期”、电影按“加入日期”倒序查询，均使用 `DateCreated`，不会用最近加入单集的日期替代节目的添加日期。首次无游标时处理现有全部电影和剧集，包括 Jellyfin 已有 Tmdb / Tvdb / Imdb ID 的条目；列表中的“未识别”指尚未被工作流确认。候选成功提交到 Jellyfin 后即确认识别结果并推进游标，不轮询等待媒体名称、年份、提供方 ID 等元数据加载完成。应用请求失败时保留待处理状态。
 
@@ -226,19 +226,9 @@ node /opt/z-media-workflow/scripts/notify-completed.mjs "%I"
 
 ## 外部 crontab 清理文件丢失的种子
 
-`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在左侧“种子清理”页面的“文件丢失种子清理”面板中，切换“同时删除下载文件”开关即自动保存并生效，无需另点保存。保存期间禁用清理操作，失败时恢复原开关并显示错误。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，集中保存在 `data/config.json`，重启后保留；Compose 使用持久卷中的 `/app/data/config.json`。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
+`POST /api/qbittorrent/cleanup-missing-files` 只处理状态为 `missingFiles` 的种子，不处理 `error`、下载中、做种或暂停的其他状态，不限制分类。在左侧“种子清理”页面的“文件丢失种子清理”面板中，切换“同时删除下载文件”开关即自动保存并生效，无需另点保存。保存期间禁用清理操作，失败时恢复原开关并显示错误。开关默认关闭，只删除种子任务；打开后同时删除其下载文件。设置统一用于页面清理和外部 crontab 调用，集中保存在 `data/workflow.sqlite`，重启后保留；Compose 使用持久卷中的 `/app/data/workflow.sqlite`。清理由 qBittorrent 原生 `torrents/delete` 执行，不直接操作文件系统。
 
-清理配置是同一 `config.json` 中的 `torrentCleanup` 字段，下面只展示这部分。页面保存时只更新 `torrentCleanup.deleteFiles`，保留服务地址、令牌和其他配置项。手工编辑后重启服务生效。媒体游标属于运行数据，仍保存到 `media-cursors.json`。
-
-```json
-{
-  "torrentCleanup": {
-    "deleteFiles": false
-  }
-}
-```
-
-已有 `config.json` 中的 `torrentCleanup` 配置继续保留；没有该字段时默认保留下载文件。旧独立清理文件不再作为应用配置来源。
+清理配置保存在数据库的 torrentCleanup.deleteFiles 字段，通过页面修改后立即生效。旧 config.json 中的清理设置不自动导入，升级后请重新设置。媒体游标也保存在数据库中。
 
 外部调用权限与下载通知一致：`WEBHOOK_AUTH_ENABLED=false` 时无需令牌；开启认证时要求 `Authorization: Bearer <WORKFLOW_API_TOKEN>`，令牌与通知共用。外部调用无需登录管理面板或提供 CSRF token；页面调用使用管理员会话和 CSRF 校验。请求体接受布尔值 `dryRun`：`{}` 或 `{"dryRun":true}` 仅预览，`{"dryRun":false}` 按已保存的文件删除设置执行清理，调用方不能通过参数覆盖该设置。页面预览或执行清理时会附带 `expectedDeleteFiles` 校验所确认的开关状态；设置变化时返回 409，要求重新读取并确认。
 

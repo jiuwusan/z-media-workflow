@@ -32,15 +32,17 @@ for(const mode of ['skip','import'])test(`database initialization ${mode}, recov
   await page.getByRole('button',{name:'下一步',exact:true}).click();
   if(mode==='skip')await page.getByRole('button',{name:'跳过',exact:true}).click();
   else{
-    const scope=JSON.stringify([`${source}/jelly/`,'lib','Movie']);
+    const scope=JSON.stringify(['http://old-jelly/','lib','Movie']);
     await page.getByRole('textbox',{name:'游标 JSON',exact:true}).fill(JSON.stringify({version:1,libraries:{[scope]:{date:null,ids:[],pending:['old'],undated:[]}}}));
     await page.getByRole('button',{name:'校验并预览',exact:true}).click();
     await page.getByText('1 个范围，1 个媒体 ID',{exact:true}).waitFor();
+    await page.getByText('1 个范围与当前 Jellyfin 地址不匹配，将保留原地址，不用于当前服务；对应存量媒体可能重新识别。请在初始化前确认。',{exact:true}).waitFor();
     await page.getByRole('button',{name:'同步并继续',exact:true}).click();
   }
   await page.getByRole('button',{name:'保存并进入登录',exact:true}).click();
   await page.getByRole('heading',{name:'登录工作空间',exact:true}).waitFor();
   assert.equal(setup.database.connection.prepare('SELECT count(*) AS n FROM media_cursor_ids').get().n,mode==='skip'?0:1);
+  if(mode==='import')assert.equal(JSON.parse(setup.database.connection.prepare('SELECT scope FROM media_cursors').get().scope)[0],'http://old-jelly/');
   await page.getByRole('link',{name:'找回账号',exact:true}).click();
   await page.getByRole('textbox',{name:'恢复密钥',exact:true}).fill((await readFile(path.join(root,'passkey'),'utf8')).trim());
   await page.getByRole('button',{name:'验证恢复密钥',exact:true}).click();

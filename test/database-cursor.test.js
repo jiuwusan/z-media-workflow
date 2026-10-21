@@ -4,6 +4,17 @@ import { openWorkflowDatabase } from '../src/storage/database.js';
 import { CursorRepository, parseCursorSnapshot } from '../src/storage/cursor-repository.js';
 import { WorkflowRepository } from '../src/storage/workflow-repository.js';
 import { WorkflowService } from '../src/service/workflow.js';
+import { recoverRunningActions } from '../src/service/workflow-recovery.js';
+
+test('recovery rollback retains verified intent protection when the final save succeeds',async()=>{
+  const db=openWorkflowDatabase(':memory:'),cursor=new CursorRepository(db,'http://jelly/');
+  const item={Id:'m',LibraryId:'lib',Type:'Movie',DateCreated:'2020-01-01'};cursor.track([item]);
+  const entry={itemId:'m',status:'failed',phase:'verified',intent:{kind:'jellyfin.apply',target:{itemId:'m',libraryId:'lib',type:'Movie'},expected:{Name:'After',ProviderIds:{Tmdb:'1'}}}};
+  const job={id:'job',input:{},sourceScope:{jellyfinUrl:'http://jelly/'},discoveryComplete:true,items:[entry]};let saved;
+  const repository={database:db,runningActions:()=>[{id:'action',jobId:'job',kind:'run',payload:{}}],get:()=>job,save:value=>{if(value.items[0].phase==='completed')throw Error('save failed');saved=structuredClone(value);}};
+  await recoverRunningActions({repository,sourceScope:job.sourceScope,services:{mediaLibrary:{ensureItem:async()=>({...item,Name:'After',ProviderIds:{Tmdb:'1'}}),markIdentified:(value,options)=>cursor.confirm(value,options)}}});
+  assert.equal(cursor.needsIdentification(item),true);assert.equal(saved.items[0].phase,'verified');assert.equal(saved.items[0].status,'failed');db.close();
+});
 test('manual snapshot preserves all cursor fields and invalid input never overwrites data', () => {
   const db=openWorkflowDatabase(':memory:'), repo=new CursorRepository(db,'http://jelly/');
   const scope=JSON.stringify(['http://jelly/','lib','Movie']);

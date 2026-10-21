@@ -57,8 +57,13 @@ export async function recoverRunningActions({ repository, services, sourceScope 
       if (!entry.intent || entry.phase === 'completed') { interrupt(entry, '服务退出导致执行中断，请重试'); continue; }
       const result = await reconcileIntent(entry.intent, services);
       if (result.state === 'matched') {
+        const before = structuredClone(entry);
         try { repository.database.transaction(()=>{completeReconciled(job, entry, result.item, services);repository.save(job);}); }
-        catch { interrupt(entry, '外部写入已核实，本地游标收尾失败，请重试'); }
+        catch {
+          for (const key of Object.keys(entry)) delete entry[key];
+          Object.assign(entry, before, { phase: 'verified' });
+          interrupt(entry, '外部写入已核实，本地游标收尾失败，请重试');
+        }
       } else interrupt(entry, result.reason ?? '操作尚未完成，请检查后重试');
     }
     summarizeJob(job);

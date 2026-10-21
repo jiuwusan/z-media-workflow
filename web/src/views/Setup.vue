@@ -1,11 +1,17 @@
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount } from 'vue';
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import { api, setSession } from '../api/index.js';
 const router = useRouter(), step = ref(0), busy = ref(false), error = ref(''), csrf = ref(''), confirmPassword = ref('');
 const form = reactive({ ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: '', PUBLIC_URL: `${window.location.origin}/`, QBT_URL: 'http://localhost:8080/', QBT_API_KEY: '', JELLYFIN_URL: 'http://localhost:8096/', JELLYFIN_API_KEY: '', DEEPSEEK_URL: 'https://api.deepseek.com/', DEEPSEEK_API_KEY: '', DEEPSEEK_MODEL: 'deepseek-flash', WORKFLOW_CALLBACK_URL: '', WEBHOOK_AUTH_ENABLED: false });
 const connections = [{ title: 'qBittorrent', url: 'QBT_URL', key: 'QBT_API_KEY' }, { title: 'Jellyfin', url: 'JELLYFIN_URL', key: 'JELLYFIN_API_KEY' }, { title: 'DeepSeek', url: 'DEEPSEEK_URL', key: 'DEEPSEEK_API_KEY' }];
 const cursorText=ref(''),cursorPreview=ref(null),cursorChoice=ref(null);
+const unmatchedScopes=computed(()=>{
+  if(!cursorPreview.value)return 0;
+  const normalize=value=>new URL(value).href.replace(/\/+$/,'');
+  try{return Object.keys(cursorPreview.value.data.libraries).filter(scope=>normalize(JSON.parse(scope)[0])!==normalize(form.JELLYFIN_URL)).length;}
+  catch{return cursorPreview.value.libraries;}
+});
 function previewCursor(){
   try{
     if(new TextEncoder().encode(cursorText.value).length>10*1024*1024)throw new Error('游标 JSON 不得超过 10 MiB');
@@ -57,6 +63,7 @@ async function save() {
           <el-input v-model="cursorText" type="textarea" :rows="9" aria-label="游标 JSON" placeholder="粘贴完整游标 JSON" @input="cursorPreview = null" />
           <el-button style="margin-top:12px" @click="previewCursor">校验并预览</el-button>
           <p v-if="cursorPreview">{{ cursorPreview.libraries }} 个范围，{{ cursorPreview.ids }} 个媒体 ID</p>
+          <el-alert v-if="unmatchedScopes" :title="`${unmatchedScopes} 个范围与当前 Jellyfin 地址不匹配，将保留原地址，不用于当前服务；对应存量媒体可能重新识别。请在初始化前确认。`" type="warning" :closable="false" show-icon />
           <el-alert title="跳过将使用空游标，存量媒体可能重新进入待识别范围。初始化完成后不再提供手动同步入口。" type="info" :closable="false" show-icon />
         </div>
         <div v-show="step === 3">

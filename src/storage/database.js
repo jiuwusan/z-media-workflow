@@ -1,9 +1,20 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, chmodSync, existsSync, openSync, closeSync } from 'node:fs';
 import path from 'node:path';
 
 export function openWorkflowDatabase(filename) {
-  if (filename !== ':memory:') mkdirSync(path.dirname(filename), { recursive: true });
+  if (filename !== ':memory:') {
+    const directory = path.dirname(filename);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    // Protect existing installations before any configuration secrets are written.
+    // Windows uses the containing directory's inherited ACLs rather than POSIX modes.
+    if (process.platform !== 'win32') chmodSync(directory, 0o700);
+    try { closeSync(openSync(filename, 'wx', 0o600)); }
+    catch (error) { if (error.code !== 'EEXIST') throw error; }
+    if (process.platform !== 'win32') for (const file of [filename, `${filename}-wal`, `${filename}-shm`]) {
+      if (existsSync(file)) chmodSync(file, 0o600);
+    }
+  }
   const connection = new DatabaseSync(filename);
   const transaction = fn => {
     if (connection.isTransaction) return fn();

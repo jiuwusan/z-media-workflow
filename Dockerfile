@@ -18,7 +18,7 @@ COPY --chown=node:node ecosystem.config.cjs ./
 COPY --chown=node:node src/ ./src/
 COPY --chown=node:node scripts/ ./scripts/
 COPY --from=web-build --chown=node:node /app/web/dist ./web/dist
-RUN mkdir -p /app/data && chown node:node /app/data
+RUN mkdir -p /app/data && chmod 700 /app/data && chown node:node /app/data
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["node", "scripts/health-check.mjs"]

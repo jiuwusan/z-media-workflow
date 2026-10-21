@@ -1,9 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, chmodSync, statSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { openWorkflowDatabase } from '../src/storage/database.js';
 import { ApplicationRepository } from '../src/storage/application-repository.js';
 import { digest, verifyPassword } from '../src/util/credentials.js';
 const input = { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'initial-password', QBT_API_KEY: 'sensitive' };
+
+test('database restricts existing POSIX files before persisting secrets',{skip:process.platform==='win32'},()=>{
+  const root=mkdtempSync(path.join(tmpdir(),'database-permissions-')),filename=path.join(root,'workflow.sqlite');
+  let database=openWorkflowDatabase(filename);database.close();chmodSync(root,0o755);chmodSync(filename,0o644);
+  database=openWorkflowDatabase(filename);
+  try{
+    new ApplicationRepository(database).initialize(input,digest('key'));
+    assert.equal(statSync(root).mode&0o777,0o700);assert.equal(statSync(filename).mode&0o777,0o600);
+    assert.equal(statSync(`${filename}-wal`).mode&0o077,0);assert.equal(statSync(`${filename}-shm`).mode&0o077,0);
+  }finally{database.close();rmSync(root,{recursive:true,force:true});}
+});
 test('initialization hashes credentials and configuration revisions roll back with audit', () => {
   const db = openWorkflowDatabase(':memory:'), repo = new ApplicationRepository(db);
   assert.equal(repo.initialized, false);

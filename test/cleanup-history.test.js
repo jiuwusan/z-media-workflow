@@ -4,6 +4,17 @@ import { openWorkflowDatabase } from '../src/storage/database.js';
 import { CleanupRepository } from '../src/storage/cleanup-repository.js';
 import { QbittorrentService } from '../src/service/qbittorrent.js';
 const hash='a'.repeat(40);
+
+test('terminal cleanup writes enforce retention without opening history',()=>{
+  const db=openWorkflowDatabase(':memory:'),history=new CleanupRepository(db);
+  const old=history.begin({},'http://qbt/');old.status='completed';history.save(old);
+  db.connection.prepare('UPDATE cleanup_runs SET updated_at=? WHERE id=?').run(0,old.id);
+  const unresolved=history.begin({},'http://qbt/');unresolved.status='interrupted';history.save(unresolved);
+  db.connection.prepare('UPDATE cleanup_runs SET updated_at=? WHERE id=?').run(0,unresolved.id);
+  const next=history.begin({},'http://qbt/');next.status='preview';history.save(next);
+  assert.equal(db.connection.prepare('SELECT count(*) AS n FROM cleanup_runs WHERE id=?').get(old.id).n,0);
+  assert.equal(history.get(unresolved.id).status,'interrupted');db.close();
+});
 test('cleanup previews persist targets and failed intent persistence prevents deletion',async t=>{
   const db=openWorkflowDatabase(':memory:');t.after(()=>db.close());const history=new CleanupRepository(db);let deletes=0;
   const service=new QbittorrentService({qbtUrl:'http://qbt/',qbtKey:'secret'},async(route,options)=>{
