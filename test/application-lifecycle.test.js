@@ -7,7 +7,11 @@ import { SetupService } from '../src/service/setup.js';
 import { AuthService } from '../src/service/auth.js';
 import { RecoveryService } from '../src/service/recovery.js';
 import { createApp } from '../src/app.js';
+import { createServices } from '../src/service/index.js';
 const input={ADMIN_USERNAME:'admin',ADMIN_PASSWORD:'first-password',QBT_API_KEY:'mock-qbt',JELLYFIN_API_KEY:'mock-jelly',DEEPSEEK_API_KEY:'mock-deep',cursor:{mode:'skip'}};
+test('production service assembly requires an initialized persistent configuration',()=>{
+  assert.throws(()=>createServices({adminUsername:'admin',adminPassword:'test-password'}),e=>e.status===503);
+});
 function ctx(setup,body) {return {request:{body},cookies:{get:()=>setup.nonce,set:()=>{}},get:()=>setup.nonce};}
 test('setup ignores invalid legacy files, initializes once and recovery invalidates old sessions', async t=>{
   const dir=mkdtempSync(path.join(tmpdir(),'app-init-'));

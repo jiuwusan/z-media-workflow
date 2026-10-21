@@ -5,8 +5,7 @@ import { MediaLibraryService } from './media-library.js';
 import { WorkflowService } from './workflow.js';
 import { AuthService } from './auth.js';
 import { TorrentNamingService } from './torrent-naming.js';
-import path from 'node:path';
-import { openWorkflowDatabase } from '../storage/database.js';
+import { AppError } from '../util/error.js';
 import { WorkflowRepository } from '../storage/workflow-repository.js';
 import { CursorRepository } from '../storage/cursor-repository.js';
 import { ConfigurationService } from './configuration.js';
@@ -14,9 +13,10 @@ import { RecoveryService } from './recovery.js';
 import { CleanupRepository } from '../storage/cleanup-repository.js';
 import { sleep } from '../util/http.js';
 export function createServices(config,{autoStart=true}={}) {
+  if(!config.store?.initialized)throw new AppError('请通过首次运行引导初始化数据库配置',503);
   const services = { qbittorrent: new QbittorrentService(config), jellyfin: new JellyfinService(config), deepseek: new DeepseekService(config), auth: new AuthService(config) };
   services.torrentNaming = new TorrentNamingService(config, services.qbittorrent, services.deepseek, [config.qbtKey, config.deepseekKey, config.adminPassword, config.workflowToken]);
-  const database = config.store?.database ?? openWorkflowDatabase(path.join(config.dataDir??path.dirname(config.configFile), 'workflow.sqlite'));
+  const database = config.store.database;
   try {
     services.database=database;
     services.configuration=new ConfigurationService(config);

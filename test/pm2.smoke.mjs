@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile,readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -34,7 +34,7 @@ test('PM2 keeps its runtime alive while the page restart loads saved config into
   repo.save(history, { actionId: historyAction.id, actionStatus: 'completed' });
   const queued = repo.accept({ input: { checkExisting: true, event: 'added' }, sourceScope: scope }); db.close();
   const ecosystem = createRequire(import.meta.url)('../ecosystem.config.cjs');
-  const app = { ...ecosystem.apps[0], cwd: root, script: path.resolve('src/server.js'), out_file: path.join(root, 'stdout.log'), error_file: path.join(root, 'stderr.log') };
+  const app = { ...ecosystem.apps[0], cwd: root, script: path.resolve('test/fixtures/application-server.mjs'),args:[String(port)], out_file: path.join(root, 'stdout.log'), error_file: path.join(root, 'stderr.log') };
   assert.equal(app.instances, 1); assert.equal(app.exec_mode, 'fork'); assert.equal(app.autorestart, true);
   const ecosystemFile = path.join(root, 'ecosystem.config.json');
   await writeFile(ecosystemFile, JSON.stringify({ apps: [app] }));
@@ -64,6 +64,16 @@ test('PM2 keeps its runtime alive while the page restart loads saved config into
     assert.equal(response.status, 200);
     return { 'Content-Type': 'application/json', Cookie: response.headers.get('set-cookie').split(';')[0], 'X-CSRF-Token': (await response.json()).data.csrfToken };
   }
+  let setupStatus;
+  for(let i=0;i<150;i++){
+    try{const r=await fetch(`${base}/api/setup/status`,{signal:AbortSignal.timeout(1000)});if(r.ok){setupStatus=r;break;}}catch{}
+    await delay(100);
+  }
+  assert.ok(setupStatus,`setup did not become available: ${logs}`);
+  const initial=(await setupStatus.json()).data;assert.equal(initial.initialized,false);assert.equal(torrentReads,0);
+  const cursorScope=JSON.stringify([document.JELLYFIN_URL,'lib','Movie']);
+  const initialized=await fetch(`${base}/api/setup`,{method:'POST',headers:{'Content-Type':'application/json',Cookie:setupStatus.headers.get('set-cookie').split(';')[0],'X-CSRF-Token':initial.csrfToken},body:JSON.stringify({ADMIN_USERNAME:document.ADMIN_USERNAME,ADMIN_PASSWORD:document.ADMIN_PASSWORD,QBT_URL:document.QBT_URL,QBT_API_KEY:document.QBT_API_KEY,JELLYFIN_API_KEY:document.JELLYFIN_API_KEY,DEEPSEEK_API_KEY:document.DEEPSEEK_API_KEY,PUBLIC_URL:`${base}/`,cursor:{mode:'import',data:{version:1,libraries:{[cursorScope]:{date:null,ids:[],pending:['retained-cursor'],undated:[]}}}}})});
+  assert.equal(initialized.status,201);assert.match(await readFile(path.join(root,'data/passkey'),'utf8'),/^v1:[a-f0-9]{64}/);
   const before = await waitReady();
   const headers = await login();
   for (let i = 0; i < 50; i++) {
@@ -76,14 +86,18 @@ test('PM2 keeps its runtime alive while the page restart loads saved config into
   const status = (await (await fetch(`${base}/api/service/status`, { headers })).json()).data;
   assert.equal(status.supported, true);
   const config = (await (await fetch(`${base}/api/config`, { headers })).json()).data;
-  const save = await fetch(`${base}/api/config`, { method: 'PUT', headers, body: JSON.stringify({ revision: config.revision, values: { DEEPSEEK_MODEL: 'restarted-model' } }) });
+  const save = await fetch(`${base}/api/config`, { method: 'PUT', headers, body: JSON.stringify({ revision: config.revision, values: { DEEPSEEK_MODEL: 'restarted-model',PORT:port,HOST:'127.0.0.1' } }) });
   assert.equal(save.status, 200); const saved = (await save.json()).data; assert.equal(saved.restartRequired, true);
+  for(let i=0;i<3;i++)assert.equal((await fetch(`${base}/api/auth/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'admin',password:'wrong-password'})})).status,401);
   const restart = await fetch(`${base}/api/service/restart`, { method: 'POST', headers, body: JSON.stringify({ revision: saved.revision }) });
   assert.equal(restart.status, 202);
   assert.equal((await restart.json()).data.instanceId, before.instanceId);
   const after = await waitReady(before.instanceId);
   assert.notEqual(after.instanceId, before.instanceId); assert.equal(runtime.exitCode, null);
   assert.equal((await fetch(`${base}/api/auth/session`, { headers })).status, 401);
+  const inspect=openWorkflowDatabase(dbFile);
+  assert.equal(inspect.connection.prepare("SELECT count FROM auth_attempts WHERE namespace='login'").get().count,3);
+  assert.equal(inspect.connection.prepare("SELECT item_id FROM media_cursor_ids WHERE kind='pending'").get().item_id,'retained-cursor');inspect.close();
   const newHeaders = await login();
   const loaded = (await (await fetch(`${base}/api/config`, { headers: newHeaders })).json()).data;
   assert.equal(loaded.values.DEEPSEEK_MODEL, 'restarted-model'); assert.equal(loaded.restartRequired, false);
