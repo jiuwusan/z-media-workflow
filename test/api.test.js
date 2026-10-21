@@ -5,14 +5,14 @@ import { validateConfig } from '../src/config/index.js';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { writeConfigFile } from '../src/util/config-file.js';
+import { writeTestConfig as writeConfigFile, testStore,readTestConfig,closeTestDatabases } from './helpers/application.js';
 const admin = 'admin-token-at-least-24-characters', webhook = 'webhook-token-at-least-24-characters';
 test('naming settings require admin and CSRF, save only queried categories and apply immediately', async t => {
   const { req, login, config, services } = await setup(t);
-  const root = mkdtempSync(path.join(tmpdir(), 'naming-settings-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = mkdtempSync(path.join(tmpdir(), 'naming-settings-')); t.after(() => (closeTestDatabases(root),rmSync(root, { recursive: true, force: true })));
   config.configFile = path.join(root, 'config.json'); config.seriesCategories = [];
-  const original = { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'test-password-123', QBT_API_KEY: 'qbt', JELLYFIN_API_KEY: 'jelly', DEEPSEEK_API_KEY: 'ai', torrentCleanup: { deleteFiles: true } };
-  writeConfigFile(config.configFile, original);
+  const original = { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: config.adminPassword, QBT_API_KEY: 'qbt', JELLYFIN_API_KEY: 'jelly', DEEPSEEK_API_KEY: 'ai', torrentCleanup: { deleteFiles: true } };
+  writeConfigFile(config.configFile, original);const savedBefore=readTestConfig(config.configFile);Object.defineProperty(config,'store',{value:testStore(config.configFile),configurable:true});
   services.qbittorrent.categories = async () => ({ series: {}, 电视剧: {} });
   const route = '/api/qbittorrent/naming-settings';
   assert.equal((await req(route)).status, 401);
@@ -22,7 +22,7 @@ test('naming settings require admin and CSRF, save only queried categories and a
   for (const body of [{}, { seriesCategories: 'series' }, { seriesCategories: ['missing'] }, { seriesCategories: ['series'], extra: true }]) assert.equal((await req(route, { method: 'PUT', headers, body: JSON.stringify(body) })).status, 400);
   const saved = await req(route, { method: 'PUT', headers, body: JSON.stringify({ seriesCategories: ['电视剧'] }) });
   assert.equal(saved.status, 200); assert.deepEqual(config.seriesCategories, ['电视剧']);
-  assert.deepEqual(JSON.parse(readFileSync(config.configFile, 'utf8')), { ...original, SERIES_CATEGORIES: ['电视剧'] });
+  assert.deepEqual(readTestConfig(config.configFile), { ...savedBefore, SERIES_CATEGORIES: ['电视剧'] });
   assert.equal((await req(route, { method: 'PUT', headers, body: JSON.stringify({ seriesCategories: [] }) })).status, 200);
   assert.deepEqual(config.seriesCategories, []);
 });

@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual, scrypt } from 'node:crypto';
 import { promisify } from 'node:util';
 import { AppError } from '../util/error.js';
+import { verifyPassword } from '../util/credentials.js';
 export function tokenEquals(a, b) { if (typeof a !== 'string' || typeof b !== 'string') return false; const left = Buffer.from(a), right = Buffer.from(b); return left.length === right.length && timingSafeEqual(left, right); }
 const derivePassword = promisify(scrypt);
 export class AuthService {
@@ -16,6 +17,13 @@ export class AuthService {
   }
   async login(username, password, ip) {
     this.prune();
+    if(this.config.store){
+      const store=this.config.store;store.attempt('login',ip);const credential=store.credential();
+      if(typeof username!=='string'||!tokenEquals(username,credential.username)||!verifyPassword(password,credential.password))throw new AppError('用户名或密码错误',401);
+      store.clearAttempts('login',ip);
+      if(this.sessions.size>=200)this.sessions.delete(this.sessions.keys().next().value);
+      const id=randomBytes(32).toString('hex'),session={csrfToken:randomBytes(24).toString('hex'),expires:Date.now()+this.config.sessionMs,version:credential.version};this.sessions.set(id,session);return {id,...session};
+    }
     const attempt = this.attempts.get(ip) ?? { count: 0, expires: Date.now() + 15 * 60000 };
     if (attempt.count >= 10) throw new AppError('登录尝试过多，请稍后再试', 429);
     attempt.count++; this.attempts.set(ip, attempt);
@@ -28,7 +36,7 @@ export class AuthService {
     const id = randomBytes(32).toString('hex'), session = { csrfToken: randomBytes(24).toString('hex'), expires: Date.now() + this.config.sessionMs };
     this.sessions.set(id, session); return { id, ...session };
   }
-  session(id) { this.prune(); return this.sessions.get(id); }
+  session(id) { this.prune(); const session=this.sessions.get(id);if(session&&this.config.store&&session.version!==this.config.store.credential().version){this.sessions.delete(id);return undefined;}return session; }
   logout(id) { this.sessions.delete(id); }
   authenticate(ctx, webhook = false) {
     const auth = ctx.get('Authorization'), bearer = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;

@@ -6,6 +6,7 @@ import { systemController } from '../controller/system.js';
 import { ConfigurationService } from '../service/configuration.js';
 import { configurationController } from '../controller/configuration.js';
 import { lifecycleController } from '../controller/lifecycle.js';
+import { pagination } from '../util/validation.js';
 export function createRouter(config, services) {
   const router = new Router();
   const auth = authController(config, services.auth), workflow = workflowController(services.workflow, services.mediaLibrary, services.jellyfin), qbt = qbittorrentController(services.qbittorrent, config), system = systemController(config, services);
@@ -19,12 +20,18 @@ export function createRouter(config, services) {
   router.get('/api/service/status', admin, lifecycle.status);
   router.post('/api/service/restart', admin, lifecycle.restart);
   router.post('/api/auth/login', auth.login);
+  if(services.recovery){
+    router.get('/api/auth/recovery/context',ctx=>{ctx.body={data:services.recovery.context(ctx)};});
+    router.post('/api/auth/recovery/verify',ctx=>{services.recovery.csrf(ctx);ctx.body={data:services.recovery.verify(ctx.request.body?.passkey,ctx.ip)};});
+    router.post('/api/auth/recovery/reset',ctx=>{services.recovery.csrf(ctx);const b=ctx.request.body??{};ctx.body={data:services.recovery.reset(b.token,b.password,b.confirmPassword,ctx.ip)};});
+  }
   router.get('/api/auth/session', admin, auth.session);
   router.post('/api/auth/logout', admin, auth.logout);
   router.get('/api/dashboard', admin, system.dashboard);
   router.post('/api/connections/check', admin, system.check);
   router.get('/api/notifications/context', admin, system.notifications);
   router.get('/api/config', admin, configuration.get);
+  router.get('/api/config/history',admin,ctx=>{ctx.body={data:services.configuration.store.audit.list(pagination(ctx.query))};});
   router.put('/api/config', admin, configuration.save);
   router.get('/api/qbittorrent/completion-notification', admin, qbt.completionNotification);
   router.get('/api/qbittorrent/added-notification', admin, qbt.addedNotification);

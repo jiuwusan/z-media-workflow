@@ -2,7 +2,6 @@ import { text, validFeedUrl, pagination } from '../util/validation.js';
 import { AppError } from '../util/error.js';
 import { log } from '../util/logger.js';
 import { isSeriesCategory } from '../util/torrent-categories.js';
-import { readConfigFile, writeConfigFile } from '../util/config-file.js';
 import { validateConfig } from '../config/index.js';
 export function qbittorrentController(qbt, config) {
   return {
@@ -15,9 +14,12 @@ export function qbittorrentController(qbt, config) {
         const available = await qbt.categories();
         if (selected.some(name => !Object.hasOwn(available, name))) throw new AppError('请选择 qBittorrent 已有分类，请刷新分类后重试');
       }
-      const document = readConfigFile(config.configFile), next = { ...document, SERIES_CATEGORIES: selected };
-      validateConfig(next, config.configFile);
-      writeConfigFile(config.configFile, next);
+      if(!config.store)throw new AppError('配置数据库不可用',503);
+      config.store.database.transaction(()=>{
+        const next={...config.store.readConfig().document,SERIES_CATEGORIES:selected};
+        validateConfig(next,config.configFile,config.store.credential());
+        config.store.updateConfig({SERIES_CATEGORIES:selected});
+      });
       config.seriesCategories = selected;
       ctx.body = { data: { seriesCategories: [...selected] } };
     },

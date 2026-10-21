@@ -13,6 +13,7 @@ async function shutdown() {
   if (workflow) workflow.stopping = true;
   const timer = setTimeout(() => process.exit(1), config.shutdownMs + 1000); timer.unref();
   server.close(); const drained = app.services?.close ? await app.services.close(config.shutdownMs) : workflow ? await workflow.close(config.shutdownMs) : true;
+  if(drained)setup.close();
   server.closeAllConnections(); log('server.stopped', { drained }); clearTimeout(timer); process.exit(drained ? 0 : 1);
 }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);

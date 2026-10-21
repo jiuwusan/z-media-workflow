@@ -14,6 +14,7 @@ export function createApp({ config, setup, servicesFactory = createServices, ser
   let routes, allowedMethods;
   function activate(nextConfig = config, nextServices = services) {
     Object.assign(config, nextConfig); services = nextServices; services.auth ??= new AuthService(config); services.lifecycle = lifecycle;
+    if(nextConfig.store)Object.defineProperty(config,'store',{value:nextConfig.store,enumerable:false,configurable:true});
     app.proxy = config.trustProxy; app.services = services;
     const router = createRouter(config, services); routes = router.routes(); allowedMethods = router.allowedMethods();
   }
@@ -26,8 +27,10 @@ export function createApp({ config, setup, servicesFactory = createServices, ser
     catch (e) { const secrets = [config.qbtKey, config.jellyfinKey, config.deepseekKey, config.adminPassword, config.workflowToken]; ctx.status = e.status ?? 500; const message = e.status ? redact(e.message, secrets) : '服务内部错误'; ctx.body = { error: { code: e.code ?? 'ERROR', message } }; if (ctx.status >= 500) log('request.failed', { path: ctx.path, error: redact(e.message, secrets) }); }
   });
   const parseJson = bodyParser({ enableTypes: ['json'], jsonLimit: '128kb' });
+  app.use((ctx,next)=>{if(ctx.method==='POST'&&ctx.path==='/api/setup'&&(!setup||setup.initialized))throw new AppError('服务已完成初始化，不能重复配置',409);return next();});
+  const parseSetup=bodyParser({enableTypes:['json'],jsonLimit:'22mb'});
   const parseCallbackForm = bodyParser({ enableTypes: ['form'], formLimit: '8kb' });
-  app.use((ctx, next) => ctx.method === 'POST' && ctx.path === '/api/webhooks/qbittorrent/completed' && ctx.is('application/x-www-form-urlencoded') ? parseCallbackForm(ctx, next) : parseJson(ctx, next));
+  app.use((ctx, next) => ctx.method==='POST'&&ctx.path==='/api/setup'?parseSetup(ctx,next):ctx.method === 'POST' && ctx.path === '/api/webhooks/qbittorrent/completed' && ctx.is('application/x-www-form-urlencoded') ? parseCallbackForm(ctx, next) : parseJson(ctx, next));
   app.use((ctx, next) => {
     if (lifecycle.pending && ctx.path.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(ctx.method)) throw new AppError('服务正在重启，请稍后重试', 503);
     return next();
@@ -37,8 +40,9 @@ export function createApp({ config, setup, servicesFactory = createServices, ser
     if (ctx.path === '/api/setup' && ctx.method === 'POST') {
       if (!setup) throw new AppError('服务已完成初始化', 409);
       let prepared;
-      const configured = setup.complete(ctx, candidate => { prepared = servicesFactory(candidate); });
+      const configured = setup.complete(ctx, candidate => { prepared = servicesFactory(candidate,{autoStart:false}); });
       activate(configured, prepared);
+      services.workflow?.start?.();
       ctx.status = 201; ctx.body = { data: { initialized: true } }; return;
     }
     if (!routes && ctx.path === '/health') { ctx.body = { data: { status: 'ok', initialized: false } }; return; }

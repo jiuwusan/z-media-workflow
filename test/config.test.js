@@ -1,3 +1,4 @@
+import {writeTestConfig,closeTestDatabases} from './helpers/application.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
@@ -20,38 +21,38 @@ test('series categories are a validated JSON list with no preselected categories
 });
 function fixture(t) {
   const root = mkdtempSync(path.join(tmpdir(), 'workflow-config-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => {closeTestDatabases(root);rmSync(root, { recursive: true, force: true });});
   return path.join(root, 'config.json');
 }
 test('missing config requests first-run setup without creating a file', t => {
   const file = fixture(t);
   assert.equal(loadConfig(file), null); assert.equal(existsSync(file), false);
 });
-test('JSON supplies native settings and environment variables are ignored', t => {
+test('database supplies native settings and environment variables are ignored', t => {
   const file = fixture(t);
-  writeFileSync(file, JSON.stringify({ ...credentials, PORT: 3123, COOKIE_SECURE: true, MAX_QUEUE: 45, QBT_URL: 'http://qbt:8080', torrentCleanup: { deleteFiles: true } }));
+  writeTestConfig(file,{ ...credentials, PORT: 3123, COOKIE_SECURE: true, MAX_QUEUE: 45, QBT_URL: 'http://qbt:8080', torrentCleanup: { deleteFiles: true } });
   const previous = process.env.PORT; process.env.PORT = '9999';
   t.after(() => { if (previous === undefined) delete process.env.PORT; else process.env.PORT = previous; });
   const config = loadConfig(file);
   assert.equal(config.port, 3123); assert.equal(config.secureCookie, true); assert.equal(config.maxQueue, 45);
   assert.equal(config.qbtUrl, 'http://qbt:8080/'); assert.equal(config.qbtKey, 'test-qbt');
-  assert.equal(new CleanupSettingsStore(config.configFile).get().deleteFiles, true);
+  assert.equal(new CleanupSettingsStore(config.store).get().deleteFiles, true);config.store.database.close();
 });
-test('invalid or incomplete existing config fails without resetting to setup or rewriting', t => {
+test('invalid or incomplete legacy config is ignored without rewriting', t => {
   const file = fixture(t);
   for (const values of [{ PORT: '3000' }, { COOKIE_SECURE: 'false' }, { QBT_URL: 123 }, { MAX_QUEUE: 0 }, { torrentCleanup: null }]) {
     const raw = JSON.stringify({ ...credentials, ...values }); writeFileSync(file, raw);
-    assert.throws(() => loadConfig(file)); assert.equal(readFileSync(file, 'utf8'), raw);
+    assert.equal(loadConfig(file),null); assert.equal(readFileSync(file, 'utf8'), raw);
   }
-  writeFileSync(file, '{}'); assert.throws(() => loadConfig(file), /ADMIN_USERNAME/);
-  writeFileSync(file, '{broken'); assert.throws(() => loadConfig(file), /配置文件无效/);
+  writeFileSync(file, '{}'); assert.equal(loadConfig(file),null);
+  writeFileSync(file, '{broken'); assert.equal(loadConfig(file),null);
 });
 test('saving the page switch preserves server settings and credentials', t => {
   const file = fixture(t);
-  writeFileSync(file, JSON.stringify({ ...credentials, PORT: 3333 }));
-  new CleanupSettingsStore(file).set({ deleteFiles: true });
-  assert.equal(loadConfig(file).port, 3333);
-  assert.equal(JSON.parse(readFileSync(file, 'utf8')).ADMIN_PASSWORD, 'test-password');
+  writeTestConfig(file,{ ...credentials, PORT: 3333 });
+  const config=loadConfig(file);new CleanupSettingsStore(config.store).set({deleteFiles:true});
+  assert.equal(config.store.readConfig().document.PORT,3333);
+  assert.equal(config.store.readConfig().document.ADMIN_PASSWORD,undefined);config.store.database.close();
 });
 test('callback token is required only when JSON enables callback authentication', () => {
   assert.equal(validateConfig(credentials).webhookAuthRequired, false);

@@ -5,14 +5,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import { createApp } from '../src/app.js';
-import { loadConfig, DEFAULT_CONFIG } from '../src/config/index.js';
+import { DEFAULT_CONFIG } from '../src/config/index.js';
 import { ConfigurationService } from '../src/service/configuration.js';
-import { writeConfigFile } from '../src/util/config-file.js';
+import { writeTestConfig as writeConfigFile, readTestConfig, loadTestConfig as loadConfig, closeTestDatabases } from './helpers/application.js';
 import { LifecycleService } from '../src/service/lifecycle.js';
 
 function fixture(t, { managed = true, shutdown = async () => {} } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'workflow-restart-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => (closeTestDatabases(root), rmSync(root, { recursive: true, force: true })));
   const file = path.join(root, 'config.json');
   writeConfigFile(file, { ...DEFAULT_CONFIG, ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'restart-test-password', QBT_API_KEY: 'qbt-secret', JELLYFIN_API_KEY: 'jelly-secret', DEEPSEEK_API_KEY: 'deep-secret' });
   const config = loadConfig(file), configuration = new ConfigurationService(config);
@@ -72,7 +72,7 @@ test('restart endpoint authenticates, validates saved revision and responds befo
   server.on('request', (req, res) => { if (req.url === '/api/service/restart') res.on('finish', () => { if (res.statusCode === 202) delivered = true; }); });
   assert.equal((await request('/api/service/status')).status, 401);
   assert.equal((await request('/api/service/restart', { method: 'POST' })).status, 401);
-  const login = await request('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: config.adminUsername, password: config.adminPassword }) });
+  const login = await request('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: config.adminUsername, password: 'restart-test-password' }) });
   const headers = { Cookie: login.headers.get('set-cookie').split(';')[0], 'Content-Type': 'application/json', 'X-CSRF-Token': (await login.json()).data.csrfToken };
   const status = (await (await request('/api/service/status', { headers })).json()).data;
   assert.equal(status.supported, true); assert.equal(typeof status.instanceId, 'string');

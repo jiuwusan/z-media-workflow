@@ -3,7 +3,7 @@ import { AppError } from '../util/error.js';
 import { redact } from '../util/logger.js';
 import { CleanupSettingsStore } from '../util/cleanup-settings.js';
 export class QbittorrentService {
-  constructor(config, http) { this.cleanupStore = new CleanupSettingsStore(config.configFile); this.cleanupSecret = config.qbtKey; this.http = http ?? createHttpClient({ baseUrl: `${config.qbtUrl}api/v2/`, headers: { Authorization: `Bearer ${config.qbtKey}` }, timeoutMs: config.requestTimeoutMs }); }
+  constructor(config, http) { this.cleanupStore = new CleanupSettingsStore(config.store); this.cleanupSecret = config.qbtKey; this.http = http ?? createHttpClient({ baseUrl: `${config.qbtUrl}api/v2/`, headers: { Authorization: `Bearer ${config.qbtKey}` }, timeoutMs: config.requestTimeoutMs }); }
   version() { return this.http('app/version'); }
   async addedNotification() {
     const prefs = await this.http('app/preferences');

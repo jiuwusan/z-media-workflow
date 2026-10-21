@@ -1,35 +1,45 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { CONFIG_FILE, DEFAULT_CONFIG, loadConfig, validateConfig } from '../config/index.js';
-import { writeConfigFile } from '../util/config-file.js';
+import { existsSync, mkdirSync, openSync, writeFileSync, fsyncSync, closeSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { DEFAULT_CONFIG, runtimeConfig, validateConfig } from '../config/index.js';
+import { openWorkflowDatabase } from '../storage/database.js';
+import { ApplicationRepository } from '../storage/application-repository.js';
+import { CursorRepository, parseCursorSnapshot } from '../storage/cursor-repository.js';
+import { digest } from '../util/credentials.js';
 import { AppError } from '../util/error.js';
 import { tokenEquals } from './auth.js';
-const allowed = ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'PUBLIC_URL', 'QBT_URL', 'QBT_API_KEY', 'JELLYFIN_URL', 'JELLYFIN_API_KEY', 'DEEPSEEK_URL', 'DEEPSEEK_API_KEY', 'DEEPSEEK_MODEL', 'WORKFLOW_CALLBACK_URL', 'WEBHOOK_AUTH_ENABLED', 'WORKFLOW_API_TOKEN', 'COOKIE_SECURE', 'TRUST_PROXY'];
+const allowed=['ADMIN_USERNAME','ADMIN_PASSWORD','PUBLIC_URL','QBT_URL','QBT_API_KEY','JELLYFIN_URL','JELLYFIN_API_KEY','DEEPSEEK_URL','DEEPSEEK_API_KEY','DEEPSEEK_MODEL','WORKFLOW_CALLBACK_URL','WEBHOOK_AUTH_ENABLED','WORKFLOW_API_TOKEN','COOKIE_SECURE','TRUST_PROXY','cursor'];
 export class SetupService {
-  constructor(filename = CONFIG_FILE) {
-    this.filename = filename; this.config = loadConfig(filename); this.nonce = randomBytes(24).toString('hex');
-    this.bootstrap = { host: '0.0.0.0', port: 3000, publicUrl: 'http://localhost:3000/', trustProxy: false, shutdownMs: 30000 };
+  constructor(location=path.resolve('data')) {
+    this.directory=path.extname(location)==='.json'?path.dirname(location):location;
+    this.filename=path.join(this.directory,'config.json');
+    this.database=openWorkflowDatabase(path.join(this.directory,'workflow.sqlite'));
+    this.store=new ApplicationRepository(this.database);this.config=runtimeConfig(this.store,this.directory);
+    this.nonce=randomBytes(24).toString('hex');
+    this.bootstrap={host:'0.0.0.0',port:3000,publicUrl:'http://localhost:3000/',trustProxy:false,shutdownMs:30000};
   }
-  get initialized() { return Boolean(this.config); }
-  status(ctx) {
-    if (this.initialized) return { initialized: true };
-    ctx.cookies.set('media_setup', this.nonce, { httpOnly: true, sameSite: 'strict', signed: false, maxAge: 30 * 60000, path: '/' });
-    return { initialized: false, csrfToken: this.nonce };
+  get initialized(){return this.store.initialized;}
+  status(ctx){if(this.initialized)return {initialized:true};ctx.cookies.set('media_setup',this.nonce,{httpOnly:true,sameSite:'strict',signed:false,maxAge:1800000,path:'/'});return {initialized:false,csrfToken:this.nonce};}
+  complete(ctx,prepare=()=>{}) {
+    if(this.initialized)throw new AppError('服务已完成初始化，不能重复配置',409);
+    if(!tokenEquals(ctx.cookies.get('media_setup',{signed:false}),this.nonce)||!tokenEquals(ctx.get('X-CSRF-Token'),this.nonce))throw new AppError('初始化 CSRF 校验失败，请刷新页面',403);
+    const input=ctx.request.body;
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!allowed.includes(k)))throw new AppError('初始化参数无效');
+    if(!input.cursor||!['import','skip'].includes(input.cursor.mode)||Object.keys(input.cursor).some(k=>!['mode','data'].includes(k)))throw new AppError('请选择同步游标或跳过');
+    const snapshot=input.cursor.mode==='import'?parseCursorSnapshot(input.cursor.data):{version:1,libraries:{}};
+    const {cursor,...fields}=input;
+    if(input.WORKFLOW_API_TOKEN!==undefined&&typeof input.WORKFLOW_API_TOKEN!=='string')throw new AppError('WORKFLOW_API_TOKEN 必须为字符串');
+    const document={...DEFAULT_CONFIG,...fields,WORKFLOW_API_TOKEN:input.WORKFLOW_API_TOKEN||randomBytes(32).toString('hex'),torrentCleanup:{deleteFiles:false}};
+    validateConfig(document,this.filename);
+    mkdirSync(this.directory,{recursive:true});const file=path.join(this.directory,'passkey');let key;
+    if(existsSync(file)){key=readFileSync(file,'utf8').trim();if(!/^v1:[a-f0-9]{64}$/.test(key))throw new AppError('已有 passkey 文件格式无效，请检查数据目录',500);}
+    else {key='v1:'+randomBytes(32).toString('hex');let fd;try{fd=openSync(file,'wx',0o600);writeFileSync(fd,key+'\n');fsyncSync(fd);}catch{throw new AppError('passkey 保存失败，请检查数据目录权限',500);}finally{if(fd!==undefined)closeSync(fd);}}
+    const configured=this.database.transaction(()=>{
+      this.store.initialize(document,digest(key),()=>new CursorRepository(this.database).importSnapshot(snapshot));
+      this.store.audit.append('初始化',this.store.readConfig().revision,{}, {cursorSync:{mode:cursor.mode,...new CursorRepository(this.database).summary()}});
+      const config=runtimeConfig(this.store,this.directory);prepare(config);return config;
+    });
+    this.config=configured;ctx.cookies.set('media_setup',null,{signed:false,path:'/'});return configured;
   }
-  complete(ctx, prepare = () => {}) {
-    if (this.initialized || existsSync(this.filename)) throw new AppError('服务已完成初始化，不能重复配置', 409);
-    if (!tokenEquals(ctx.cookies.get('media_setup', { signed: false }), this.nonce) || !tokenEquals(ctx.get('X-CSRF-Token'), this.nonce)) throw new AppError('初始化 CSRF 校验失败，请刷新页面', 403);
-    const input = ctx.request.body;
-    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !allowed.includes(key))) throw new AppError('初始化参数无效');
-    if (typeof input.ADMIN_PASSWORD !== 'string' || input.ADMIN_PASSWORD.length < 8) throw new AppError('管理员密码至少 8 位');
-    const token = input.WORKFLOW_API_TOKEN === undefined || input.WORKFLOW_API_TOKEN === '' ? randomBytes(32).toString('hex') : input.WORKFLOW_API_TOKEN;
-    const document = { ...DEFAULT_CONFIG, ...input, WORKFLOW_API_TOKEN: token, torrentCleanup: { deleteFiles: false } };
-    const config = validateConfig(document, this.filename);
-    prepare(config);
-    try { writeConfigFile(this.filename, document, { exclusive: true }); }
-    catch (error) { if (error.code === 'EEXIST') throw new AppError('服务已完成初始化，不能重复配置', 409); throw new AppError('配置保存失败，请检查数据目录权限', 500); }
-    this.config = config;
-    ctx.cookies.set('media_setup', null, { signed: false, path: '/' });
-    return config;
-  }
+  close(){this.database.close();}
 }

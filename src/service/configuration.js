@@ -1,41 +1,36 @@
-import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { DEFAULT_CONFIG, CONFIG_FIELDS, validateConfig } from '../config/index.js';
-import { readConfigFile, writeConfigFile } from '../util/config-file.js';
+import { DEFAULT_CONFIG,CONFIG_FIELDS,validateConfig } from '../config/index.js';
 import { AppError } from '../util/error.js';
-const secrets = new Set(['ADMIN_PASSWORD', 'QBT_API_KEY', 'JELLYFIN_API_KEY', 'DEEPSEEK_API_KEY', 'WORKFLOW_API_TOKEN']);
-const revision = document => createHash('sha256').update(JSON.stringify(document)).digest('hex');
-const fieldValue = (config, field) => field.split('.').reduce((value, key) => value?.[key], config);
+import { openWorkflowDatabase } from '../storage/database.js';
+import { ApplicationRepository } from '../storage/application-repository.js';
+import { secretFields } from '../storage/audit-repository.js';
+const fieldValue=(config,field)=>field.split('.').reduce((value,key)=>value?.[key],config);
+export function configurationStore(config) {
+  if(config.store)return config.store;
+  const store=new ApplicationRepository(openWorkflowDatabase(':memory:'));
+  const document={...DEFAULT_CONFIG,ADMIN_USERNAME:config.adminUsername??'admin',ADMIN_PASSWORD:config.adminPassword??'test-only-password'};
+  for(const [key,[field]] of Object.entries(CONFIG_FIELDS)){const value=fieldValue(config,field);if(value!==undefined)document[key]=value;}
+  store.initialize(document,'');return store;
+}
 export class ConfigurationService {
-  constructor(config) { this.runtime = config; this.filename = config.configFile; }
-  read() {
-    if (!this.filename || !existsSync(this.filename)) throw new AppError('配置文件不存在，请恢复配置文件后重试', 503);
-    const document = readConfigFile(this.filename); validateConfig(document, this.filename); return document;
-  }
-  view(document) {
-    const saved = validateConfig(document, this.filename), values = {}, secretFields = {};
-    for (const [key, [, type]] of Object.entries(CONFIG_FIELDS)) {
-      const value = document[key] ?? DEFAULT_CONFIG[key] ?? (type === 'string' ? '' : undefined);
-      if (secrets.has(key)) secretFields[key] = Boolean(value);
-      else values[key] = value;
+  constructor(config){this.runtime=config;this.filename=config.configFile;this.store=configurationStore(config);}
+  read(){const record=this.store.readConfig();if(!record)throw new AppError('请先完成首次运行配置',503);return record.document;}
+  view(document,revision=this.store.readConfig().revision){
+    const saved=validateConfig(document,this.filename,this.store.credential()),values={},secrets={};
+    for(const [key,[,type]] of Object.entries(CONFIG_FIELDS)){
+      if(secretFields.has(key))secrets[key]=key==='ADMIN_PASSWORD'?Boolean(this.store.credential()):Boolean(document[key]);
+      else values[key]=document[key]??DEFAULT_CONFIG[key]??(type==='string'?'':undefined);
     }
-    const restartRequired = Object.values(CONFIG_FIELDS).some(([field]) => JSON.stringify(fieldValue(saved, field)) !== JSON.stringify(fieldValue(this.runtime, field)));
-    return { values, secretFields, revision: revision(document), restartRequired };
+    const restartRequired=Object.entries(CONFIG_FIELDS).some(([key,[field]])=>!['ADMIN_USERNAME','ADMIN_PASSWORD'].includes(key)&&JSON.stringify(fieldValue(saved,field))!==JSON.stringify(fieldValue(this.runtime,field)));
+    return {values,secretFields:secrets,revision,restartRequired};
   }
-  get() { return this.view(this.read()); }
-  save(input) {
-    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['values', 'revision'].includes(key)) || !input.values || typeof input.values !== 'object' || Array.isArray(input.values) || typeof input.revision !== 'string') throw new AppError('配置保存参数无效');
-    const document = this.read();
-    if (input.revision !== revision(document)) throw new AppError('配置已被其他操作修改，请重新读取后再保存', 409);
-    const next = { ...document };
-    for (const [key, value] of Object.entries(input.values)) {
-      if (!Object.hasOwn(CONFIG_FIELDS, key)) throw new AppError('存在不支持的配置项');
-      if (secrets.has(key) && value === '') continue;
-      if (key === 'ADMIN_PASSWORD' && (typeof value !== 'string' || value.length < 8)) throw new AppError('管理员密码至少 8 位');
-      next[key] = value;
-    }
-    validateConfig(next, this.filename);
-    writeConfigFile(this.filename, next);
-    return this.view(next);
+  get(){return this.view(this.read());}
+  save(input){
+    if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!['values','revision'].includes(k))||!input.values||typeof input.values!=='object'||Array.isArray(input.values)||typeof input.revision!=='string')throw new AppError('配置保存参数无效');
+    return this.store.database.transaction(()=>{
+      const patch={};
+      for(const [key,value] of Object.entries(input.values)){if(!Object.hasOwn(CONFIG_FIELDS,key))throw new AppError('存在不支持的配置项');if(secretFields.has(key)&&value==='')continue;patch[key]=value;}
+      validateConfig({...this.read(),...patch},this.filename,this.store.credential());
+      const result=this.store.updateConfig(patch,{revision:input.revision});return this.view(result.document,result.revision);
+    });
   }
 }

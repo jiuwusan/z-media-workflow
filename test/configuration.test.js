@@ -1,16 +1,17 @@
+import { verifyPassword } from '../src/util/credentials.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ConfigurationService } from '../src/service/configuration.js';
-import { loadConfig, DEFAULT_CONFIG } from '../src/config/index.js';
-import { writeConfigFile } from '../src/util/config-file.js';
+import { DEFAULT_CONFIG } from '../src/config/index.js';
+import { writeTestConfig as writeConfigFile, readTestConfig, loadTestConfig as loadConfig, closeTestDatabases } from './helpers/application.js';
 import { CleanupSettingsStore } from '../src/util/cleanup-settings.js';
 import { createApp } from '../src/app.js';
 const initial = { ...DEFAULT_CONFIG, ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'private-password-123456', QBT_API_KEY: 'private-qbt', JELLYFIN_API_KEY: 'private-jelly', DEEPSEEK_API_KEY: 'private-deep', WORKFLOW_API_TOKEN: 'private-workflow-token-123456789', future: { enabled: true } };
 function fixture(t) {
-  const root = mkdtempSync(path.join(tmpdir(), 'workflow-config-edit-')); t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = mkdtempSync(path.join(tmpdir(), 'workflow-config-edit-')); t.after(() => (closeTestDatabases(root), rmSync(root, { recursive: true, force: true })));
   const file = path.join(root, 'config.json'); writeConfigFile(file, initial);
   const config = loadConfig(file), service = new ConfigurationService(config);
   return { file, config, service };
@@ -48,30 +49,30 @@ test('configuration patches persist, retain blank secrets and preserve cleanup a
   const { service, file, config } = fixture(t);
   const saved = service.save({ values: { QBT_URL: 'http://new-qbt:8080/', ADMIN_PASSWORD: '', QBT_API_KEY: '', DEEPSEEK_API_KEY: 'new-deep-secret' }, revision: service.get().revision });
   assert.equal(saved.restartRequired, true); assert.equal(config.qbtUrl, initial.QBT_URL);
-  const document = JSON.parse(readFileSync(file, 'utf8'));
-  assert.equal(document.QBT_URL, 'http://new-qbt:8080/'); assert.equal(document.ADMIN_PASSWORD, initial.ADMIN_PASSWORD);
+  const document = readTestConfig(file);
+  assert.equal(document.QBT_URL, 'http://new-qbt:8080/'); assert.equal(document.ADMIN_PASSWORD, undefined);
   assert.equal(document.QBT_API_KEY, initial.QBT_API_KEY); assert.equal(document.DEEPSEEK_API_KEY, 'new-deep-secret');
   assert.deepEqual(document.torrentCleanup, initial.torrentCleanup); assert.deepEqual(document.future, initial.future);
   assert.equal(JSON.stringify(saved).includes('new-deep-secret'), false);
   assert.equal(new ConfigurationService(loadConfig(file)).get().restartRequired, false);
 });
 test('administrator password changes accept eight characters and reject seven without saving', t => {
-  const { service, file } = fixture(t);
-  const before = readFileSync(file, 'utf8');
-  assert.throws(() => service.save({ values: { ADMIN_PASSWORD: '1234567' }, revision: service.get().revision }), /管理员密码至少 8 位/);
-  assert.equal(readFileSync(file, 'utf8'), before);
+  const { service, file,config } = fixture(t);
+  const before = JSON.stringify(readTestConfig(file));
+  assert.throws(() => service.save({ values: { ADMIN_PASSWORD: '1234567' }, revision: service.get().revision }), /管理员密码/);
+  assert.equal(JSON.stringify(readTestConfig(file)), before);
   service.save({ values: { ADMIN_PASSWORD: '12345678' }, revision: service.get().revision });
-  assert.equal(loadConfig(file).adminPassword, '12345678');
+  assert.equal(verifyPassword('12345678',config.store.credential().password),true);
 });
 
 test('stale edits and invalid settings never overwrite the configuration', t => {
-  const { service, file } = fixture(t), revision = service.get().revision;
-  new CleanupSettingsStore(file).set({ deleteFiles: true });
-  const before = readFileSync(file, 'utf8');
+  const { service, file, config } = fixture(t), revision = service.get().revision;
+  new CleanupSettingsStore(config.store).set({ deleteFiles: true });
+  const before = JSON.stringify(readTestConfig(file));
   assert.throws(() => service.save({ values: { ADMIN_USERNAME: 'other' }, revision }), e => e.status === 409);
   for (const values of [{ PORT: 0 }, { COOKIE_SECURE: 'true' }, { unknown: true }, { torrentCleanup: { deleteFiles: false } }, { ADMIN_PASSWORD: 'short' }, { QBT_API_KEY: null }]) {
     assert.throws(() => service.save({ values, revision: service.get().revision }));
-    assert.equal(readFileSync(file, 'utf8'), before);
+    assert.equal(JSON.stringify(readTestConfig(file)), before);
   }
 });
 test('configuration API requires an administrator session and CSRF for saving', async t => {
@@ -88,5 +89,5 @@ test('configuration API requires an administrator session and CSRF for saving', 
   const body = JSON.stringify({ values: { ADMIN_USERNAME: 'new-admin' }, revision: view.revision });
   assert.equal((await request('/config', { method: 'PUT', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body })).status, 403);
   const saved = await request('/config', { method: 'PUT', headers: { Cookie: cookie, 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body });
-  assert.equal(saved.status, 200); assert.equal((await saved.json()).data.restartRequired, true);
+  assert.equal(saved.status, 200); assert.equal((await saved.json()).data.restartRequired, false);
 });
