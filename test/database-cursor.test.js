@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { openWorkflowDatabase } from '../src/storage/database.js';
+import { CursorRepository, parseCursorSnapshot } from '../src/storage/cursor-repository.js';
+test('manual snapshot preserves all cursor fields and invalid input never overwrites data', () => {
+  const db=openWorkflowDatabase(':memory:'), repo=new CursorRepository(db,'http://jelly/');
+  const scope=JSON.stringify(['http://jelly/','lib','Movie']);
+  repo.importSnapshot(parseCursorSnapshot(JSON.stringify({version:1,libraries:{[scope]:{date:'2020-01-01T00:00:00.000Z',ids:['old','old'],pending:['failed'],undated:['nodate']}}})));
+  const make=(Id,DateCreated)=>({Id,DateCreated,LibraryId:'lib',Type:'Movie'});
+  assert.equal(repo.needsIdentification(make('old','2020-01-01')),false);
+  assert.equal(repo.needsIdentification(make('new','2020-01-01')),true);
+  assert.equal(repo.needsIdentification(make('failed','2019-01-01')),true);
+  assert.equal(repo.needsIdentification(make('nodate')),false);
+  assert.throws(()=>parseCursorSnapshot({version:1,libraries:{bad:{date:null,ids:[],pending:[],undated:[]}}}));
+  assert.throws(()=>parseCursorSnapshot({version:2,libraries:{}}));
+  const b=new CursorRepository(db,'http://jelly/'); assert.equal(b.needsIdentification(make('old','2020-01-01')),false);
+  db.close();
+});
+test('cursor advance and consumer completion share a rollback boundary', () => {
+  const db=openWorkflowDatabase(':memory:'), repo=new CursorRepository(db,'http://jelly/');
+  const item={Id:'new',LibraryId:'lib',Type:'Movie',DateCreated:'2021-01-01'};
+  repo.track([item]);
+  assert.throws(()=>db.transaction(()=>{repo.confirm(item);throw Error('save task failed');}));
+  assert.equal(repo.needsIdentification(item),true);
+  repo.confirm(item); assert.equal(repo.needsIdentification(item),false);
+  const recovered={...item,Id:'recovered'};
+  assert.throws(()=>repo.confirm(recovered));
+  repo.confirm(recovered,{verified:true}); assert.equal(repo.needsIdentification(recovered),false);
+  db.close();
+});

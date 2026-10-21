@@ -9,7 +9,7 @@ export class MediaLibraryService {
     const scope = filters.itemIds?.length ? await this.scopedItems({ libraryId: filters.libraryId, type: filters.type }) : items;
     this.cursors.track(scope);
   }
-  markIdentified(item) { this.cursors.confirm(item); }
+  markIdentified(item,options) { this.cursors.confirm(item,options); }
   async libraries() {
     const all = await this.jellyfin.libraries();
     return all.filter(lib => ['tvshows', 'movies'].includes(lib.CollectionType));

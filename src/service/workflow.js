@@ -84,7 +84,7 @@ export class WorkflowService {
         if (entry.intent && entry.phase !== 'completed') {
           const result = await reconcileIntent(entry.intent, this.services);
           if (result.state === 'matched') {
-            await completeReconciled(job, entry, result.item, this.services); job.items.push(entry); this.checkpoint(job);
+            this.repository.database.transaction(()=>{completeReconciled(job, entry, result.item, this.services);job.items.push(entry);this.checkpoint(job);});
             this.resolveParent(action.payload.parentJobId, entry); continue;
           }
           if (result.state !== 'unchanged') {
@@ -274,7 +274,7 @@ export class WorkflowService {
   async applyCandidate(job, entry, candidate) {
     if (entry.intent && entry.phase !== 'completed') {
       const result = await reconcileIntent(entry.intent, this.services);
-      if (result.state === 'matched') { await completeReconciled(job, entry, result.item, this.services); this.checkpoint(job); if (job.parentJobId) this.resolveParent(job.parentJobId, entry); return; }
+      if (result.state === 'matched') { this.repository.database.transaction(()=>{completeReconciled(job, entry, result.item, this.services);this.checkpoint(job);}); if (job.parentJobId) this.resolveParent(job.parentJobId, entry); return; }
       if (result.state !== 'unchanged') throw new AppError(result.reason ?? '执行结果待核对', 409);
     }
     entry.selectedCandidate = structuredClone(candidate);
@@ -288,10 +288,12 @@ export class WorkflowService {
     // Successful submission completes identification; Jellyfin loads metadata asynchronously.
     await this.services.jellyfin.apply(entry.itemId, remote, item);
     entry.phase = 'verified'; this.checkpoint(job);
-    if (!job.input.correction) this.services.mediaLibrary.markIdentified(item);
-    entry.confirmed = { Name: remote.Name, ProductionYear: remote.ProductionYear, ProviderIds: structuredClone(remote.ProviderIds) };
-    entry.status = 'completed'; entry.phase = 'completed'; delete entry.error; delete entry.message;
-    this.checkpoint(job);
+    this.repository.database.transaction(()=>{
+      if (!job.input.correction) this.services.mediaLibrary.markIdentified(item);
+      entry.confirmed = { Name: remote.Name, ProductionYear: remote.ProductionYear, ProviderIds: structuredClone(remote.ProviderIds) };
+      entry.status = 'completed'; entry.phase = 'completed'; delete entry.error; delete entry.message;
+      this.checkpoint(job);
+    });
     if (job.parentJobId) this.resolveParent(job.parentJobId, entry);
     this.update(job, '提交后台元数据刷新');
     try { await this.services.jellyfin.refreshItem(entry.itemId, { full: true }); }

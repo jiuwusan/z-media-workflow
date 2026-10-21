@@ -32,10 +32,10 @@ export async function reconcileIntent(intent, services) {
 export function interrupt(entry, reason) {
   entry.status = 'failed'; entry.recoveryState = 'interrupted'; entry.error = reason;
 }
-export async function completeReconciled(job, entry, item, services) {
+export function completeReconciled(job, entry, item, services) {
   entry.phase = 'verified';
   if (entry.intent.kind === 'jellyfin.apply') {
-    if (!job.input.correction) await services.mediaLibrary.markIdentified(item);
+    if (!job.input.correction) services.mediaLibrary.markIdentified(item,{verified:true});
     const { Name, ProductionYear, ProviderIds } = entry.intent.expected;
     entry.confirmed = { Name, ...(ProductionYear == null ? {} : { ProductionYear }), ProviderIds };
   }
@@ -57,7 +57,7 @@ export async function recoverRunningActions({ repository, services, sourceScope 
       if (!entry.intent || entry.phase === 'completed') { interrupt(entry, '服务退出导致执行中断，请重试'); continue; }
       const result = await reconcileIntent(entry.intent, services);
       if (result.state === 'matched') {
-        try { await completeReconciled(job, entry, result.item, services); }
+        try { repository.database.transaction(()=>{completeReconciled(job, entry, result.item, services);repository.save(job);}); }
         catch { interrupt(entry, '外部写入已核实，本地游标收尾失败，请重试'); }
       } else interrupt(entry, result.reason ?? '操作尚未完成，请检查后重试');
     }
