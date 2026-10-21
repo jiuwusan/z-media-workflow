@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { openWorkflowDatabase } from '../src/storage/database.js';
+import { ApplicationRepository } from '../src/storage/application-repository.js';
+import { digest, verifyPassword } from '../src/util/credentials.js';
+const input = { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'initial-password', QBT_API_KEY: 'sensitive' };
+test('initialization hashes credentials and configuration revisions roll back with audit', () => {
+  const db = openWorkflowDatabase(':memory:'), repo = new ApplicationRepository(db);
+  assert.equal(repo.initialized, false);
+  repo.initialize(input, digest('passkey'));
+  assert.equal(repo.initialized, true); assert.equal(repo.readConfig().document.ADMIN_PASSWORD, undefined);
+  assert.equal(verifyPassword('initial-password', repo.credential().password), true);
+  assert.throws(() => repo.initialize(input, 'x'), e => e.status === 409);
+  const before = repo.readConfig();
+  assert.throws(() => repo.updateConfig({ PORT: 3001 }, { revision: 'stale' }), e => e.status === 409);
+  db.connection.exec("CREATE TRIGGER reject_audit BEFORE INSERT ON configuration_audit BEGIN SELECT RAISE(ABORT,'full'); END");
+  assert.throws(() => repo.updateConfig({ PORT: 3001 }, { revision: before.revision }));
+  assert.equal(repo.readConfig().document.PORT, undefined); db.close();
+});
+test('persistent attempt counters and recovery tokens expire and are consumed exactly once', () => {
+  const db = openWorkflowDatabase(':memory:'), a = new ApplicationRepository(db); a.initialize(input, digest('passkey'));
+  for (let i = 0; i < 10; i++) a.attempt('login', 'ip');
+  const b = new ApplicationRepository(db);
+  assert.throws(() => b.attempt('login', 'ip'), e => e.status === 429);
+  b.attempt('recovery', 'ip'); b.clearAttempts('login', 'ip'); b.attempt('login', 'ip');
+  const token = b.createRecovery(); b.consumeRecovery(token, 'new-password');
+  assert.equal(verifyPassword('new-password', b.credential().password), true);
+  assert.throws(() => b.consumeRecovery(token, 'another-password'), e => e.status === 401);
+  const old = b.createRecovery(); b.replacePassword('changed-password');
+  assert.throws(() => b.consumeRecovery(old, 'another-password'), e => e.status === 401);
+  const expired = b.createRecovery(Date.now() - 300001);
+  assert.throws(() => b.consumeRecovery(expired, 'another-password'), e => e.status === 401);
+  const audit = JSON.stringify(b.audit.list());
+  for (const secret of ['initial-password', 'new-password', 'sensitive', token, 'passkey']) assert.equal(audit.includes(secret), false);
+  db.close();
+});
