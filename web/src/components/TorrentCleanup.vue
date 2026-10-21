@@ -3,6 +3,8 @@ import { ref, computed, onMounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { api } from '../api/index.js';
 import { copyText } from '../utils/clipboard.js';
+import CleanupHistory from './CleanupHistory.vue';
+const historyPanel=ref(null);
 const deleteFiles = ref(false), savedDeleteFiles = ref(false), loaded = ref(false), loading = ref(false), saving = ref(false), busy = ref(false), error = ref(''), result = ref(null);
 const callUrl = new URL('/api/qbittorrent/cleanup-missing-files', window.location.origin).href;
 const authRequired = ref(true), callReady = ref(false), callError = ref(''), callLoading = ref(false);
@@ -42,7 +44,7 @@ async function cleanup(dryRun) {
     result.value = await api('/qbittorrent/cleanup-missing-files', { method: 'POST', body: { dryRun, expectedDeleteFiles: savedDeleteFiles.value } });
     error.value = '';
   } catch (e) { if (e.data) result.value = e.data; if (e instanceof Error) error.value = e.message; }
-  finally { busy.value = false; }
+  finally { busy.value = false;historyPanel.value?.load(); }
 }
 onMounted(load);
 onMounted(loadCall);
@@ -79,6 +81,7 @@ onMounted(loadCall);
       <pre v-if="callReady" class="code">{{ callCommand }}</pre>
     </div>
   </section>
+  <CleanupHistory ref="historyPanel" />
 </template>
 <style scoped>
 .cleanup-setting { padding: 12px 16px; margin-bottom: 18px; border: 1px solid var(--el-border-color); border-radius: 8px; background: #f8fafb; }

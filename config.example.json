@@ -30,7 +30,6 @@
   "MAX_QUEUE": 30,
   "MAX_JOBS": 200,
   "JOB_TTL_MS": 86400000,
-  "MEDIA_CURSOR_FILE": "data/media-cursors.json",
   "SHUTDOWN_TIMEOUT_MS": 30000,
   "torrentCleanup": {
     "deleteFiles": false

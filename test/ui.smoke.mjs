@@ -5,8 +5,8 @@ import { mkdir, access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
-import { loadConfig } from '../src/config/index.js';
-import { writeConfigFile } from '../src/util/config-file.js';
+
+import { writeTestConfig as writeConfigFile, readTestConfig, loadTestConfig as loadConfig, closeTestDatabases } from './helpers/application.js';
 import { SetupService } from '../src/service/setup.js';
 import { createServices } from '../src/service/index.js';
 import { createApp } from '../src/app.js';
@@ -18,7 +18,7 @@ import { LifecycleService } from '../src/service/lifecycle.js';
 
 test('configuration restart waits for a new PM2 worker, rejects unsaved changes and returns to login', { timeout: 60000 }, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'media-restart-ui-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => {closeTestDatabases(root);return rm(root, { recursive: true, force: true });});
   const filename = path.join(root, 'config.json');
   writeConfigFile(filename, { ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'restart-ui-password', QBT_API_KEY: 'mock-qbt', JELLYFIN_API_KEY: 'mock-jelly', DEEPSEEK_API_KEY: 'mock-deep' });
   const config = loadConfig(filename);
@@ -38,7 +38,7 @@ test('configuration restart waits for a new PM2 worker, rejects unsaved changes 
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}/configuration`);
   await page.getByRole('textbox', { name: '用户名', exact: true }).fill(config.adminUsername);
-  await page.getByRole('textbox', { name: '密码', exact: true }).fill(config.adminPassword);
+  await page.getByRole('textbox', { name: '密码', exact: true }).fill('restart-ui-password');
   await page.getByRole('button', { name: '进入管理面板' }).click();
   await page.getByRole('button', { name: '展开导航', exact: true }).click();
   await page.getByRole('link', { name: '基础配置', exact: true }).click();
@@ -174,8 +174,8 @@ test('media library supports manual correction while preserving filters, sort an
 });
 test('first-run wizard saves config, handles validation and remains disabled after reload', { timeout: 60000 }, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'workflow-setup-ui-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const file = path.join(root, 'config.json'), setup = new SetupService(file);
+  t.after(() => {setup.close();closeTestDatabases(root);return rm(root, { recursive: true, force: true });});
+  const file = path.join(root, 'config.json'), setup = new SetupService(file);t.after(()=>setup.close());
   const app = createApp({ config: { ...setup.bootstrap }, setup, servicesFactory: () => ({}) });
   const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r)); t.after(() => server.close());
   let executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
@@ -200,6 +200,7 @@ test('first-run wizard saves config, handles validation and remains disabled aft
   for (const name of ['qBittorrent', 'Jellyfin', 'DeepSeek']) await page.getByRole('textbox', { name: `${name} API 密钥`, exact: true }).fill(`mock-${name}`);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.getByRole('button', { name: '下一步', exact: true }).click();
+  await page.getByRole('button',{name:'跳过',exact:true}).click();
   await mkdir('.test-artifacts', { recursive: true }); await page.screenshot({ path: '.test-artifacts/setup-mobile.png', fullPage: true });
   await page.getByRole('button', { name: '保存并进入登录', exact: true }).click();
   await page.getByRole('heading', { name: '登录工作空间', exact: true }).waitFor();
@@ -262,7 +263,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   const config = loadConfig(filename);
   config.mediaCursorFile = path.join(cursorDir, 'cursors.json');
   config.configFile = path.join(cursorDir, 'config.json');
-  let closeServices; t.after(async () => { await closeServices?.(); await rm(cursorDir, { recursive: true, force: true }); });
+  let closeServices; t.after(async () => { await closeServices?.();closeTestDatabases(cursorDir); await rm(cursorDir, { recursive: true, force: true }); });
   const services = createServices(config); closeServices = () => services.close(1000);
   const server = createApp({ config, services }).listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r)); t.after(() => server.close()); config.publicUrl = `http://127.0.0.1:${server.address().port}/`;
@@ -271,7 +272,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) }); t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on('pageerror', e => errors.push(e.message));
-  await page.goto(config.publicUrl); await page.getByRole('textbox', { name: '用户名', exact: true }).fill(config.adminUsername); await page.getByRole('textbox', { name: '密码', exact: true }).fill(config.adminPassword);
+  await page.goto(config.publicUrl); await page.getByRole('textbox', { name: '用户名', exact: true }).fill(config.adminUsername); await page.getByRole('textbox', { name: '密码', exact: true }).fill('browser-test-password-123456');
   await page.getByRole('button', { name: '进入管理面板' }).click(); await page.getByRole('heading', { name: '工作流概览', exact: true }).waitFor();
   await page.getByRole('button', { name: '检查连接' }).click(); await page.getByText('在线', { exact: true }).first().waitFor();
   await mkdir('.test-artifacts', { recursive: true }); await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: '.test-artifacts/dashboard-desktop.png', fullPage: true });
@@ -406,13 +407,13 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await cleanupSwitch.locator('..').click();
   await cleanupPanel.getByText('模拟设置保存失败', { exact: true }).waitFor();
   assert.equal(await cleanupSwitch.getAttribute('aria-checked'), 'false');
-  assert.equal(new CleanupSettingsStore(config.configFile).get().deleteFiles, false);
+  assert.equal(new CleanupSettingsStore(config.store).get().deleteFiles, false);
   await page.unroute('**/api/qbittorrent/cleanup-settings');
   await cleanupSwitch.locator('..').click();
   await page.getByText('清理设置已保存', { exact: true }).waitFor();
   await page.reload(); await cleanupSwitch.waitFor({ state: 'attached' });
   await page.waitForFunction(() => document.querySelector('[aria-label="同时删除下载文件"]')?.getAttribute('aria-checked') === 'true');
-  assert.equal(new CleanupSettingsStore(config.configFile).get().deleteFiles, true);
+  assert.equal(new CleanupSettingsStore(config.store).get().deleteFiles, true);
   await cleanupPanel.getByRole('button', { name: '预览清理', exact: true }).click();
   await cleanupPanel.getByText('Missing movie', { exact: true }).waitFor(); assert.deepEqual(cleanupCalls, []);
   await cleanupPanel.getByRole('button', { name: '清理文件丢失种子', exact: true }).click();
@@ -450,7 +451,7 @@ test('panel login, RSS rules, preview, manual confirmation, responsive navigatio
   await page.getByText('存在已保存但尚未生效的配置，请重启服务。', { exact: true }).waitFor();
   assert.equal(loadConfig(filename).deepseekModel, 'new-test-model'); assert.equal(config.deepseekModel, 'deepseek-flash');
   assert.deepEqual(loadConfig(filename).seriesCategories, ['series']);
-  assert.equal(loadConfig(filename).qbtKey, 'mock-qbt'); assert.equal(new CleanupSettingsStore(filename).get().deleteFiles, false);
+  assert.equal(loadConfig(filename).qbtKey, 'mock-qbt'); assert.equal(new CleanupSettingsStore(config.store).get().deleteFiles, false);
   await page.reload();
   await page.getByText('存在已保存但尚未生效的配置，请重启服务。', { exact: true }).waitFor();
   assert.equal(new URL(page.url()).pathname, '/configuration');

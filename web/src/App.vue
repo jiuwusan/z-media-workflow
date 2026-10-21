@@ -8,7 +8,7 @@ const links = [{ path: '/', label: '概览', icon: DataAnalysis }, { path: '/lib
 async function logout() { try { await api('/auth/logout', { method: 'POST' }); setSession(null); await router.push('/login'); } catch {} }
 </script>
 <template>
-  <router-view v-if="['/login', '/setup'].includes(route.path)" />
+  <router-view v-if="['/login', '/setup', '/recover'].includes(route.path)" />
   <div v-else class="shell">
     <div v-if="expanded" class="sidebar-backdrop" @click="expanded = false"></div>
     <aside class="sidebar" :class="{ expanded }">

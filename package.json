@@ -12,7 +12,7 @@
     "dev:web": "npm run dev --prefix web",
     "build": "npm run build --prefix web",
     "test": "node --test test/*.test.js",
-    "test:ui": "node --test test/ui.smoke.mjs",
+    "test:ui": "node --test test/ui.smoke.mjs test/application-ui.smoke.mjs",
     "check:connections": "node scripts/check-connections.mjs",
     "start:pm2": "pm2-runtime ecosystem.config.cjs",
     "test:pm2": "node --test test/pm2.smoke.mjs"
