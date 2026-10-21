@@ -113,8 +113,11 @@ test('configured series categories use exact case-insensitive names for checks a
 });
 test('empty magnet file list waits for metadata rather than claiming completion', async () => {
   const f = fixture(); const files = f.qbt.files; let reads = 0;
+  // Leave room for other test workers performing password hashing; the failure branch below stays short.
+  f.service.config.torrentFilesTimeoutMs=2000;
   f.qbt.files = async () => ++reads < 3 ? [] : files();
   await f.service.run(f.job, () => {}); assert.equal(f.calls(), 1);
+  f.service.config.torrentFilesTimeoutMs=30;
   f.qbt.files = async () => []; await assert.rejects(f.service.run(f.job, () => {}), /文件列表.*超时/);
 });
 test('uncertain AI defaults to S01 without removing any title suffix', async () => {
