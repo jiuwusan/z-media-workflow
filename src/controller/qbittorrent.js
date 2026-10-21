@@ -42,7 +42,7 @@ export function qbittorrentController(qbt, config) {
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => !['dryRun', 'expectedDeleteFiles'].includes(key))) throw new AppError('请求体必须是对象，只允许 dryRun 和 expectedDeleteFiles 参数');
       if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') throw new AppError('dryRun 必须为布尔值');
       if (body.expectedDeleteFiles !== undefined && typeof body.expectedDeleteFiles !== 'boolean') throw new AppError('expectedDeleteFiles 必须为布尔值');
-      const result = await qbt.cleanupMissingFiles({ dryRun: body.dryRun ?? true, ...(body.expectedDeleteFiles === undefined ? {} : { expectedDeleteFiles: body.expectedDeleteFiles }) });
+      const result = await qbt.cleanupMissingFiles({ dryRun: body.dryRun ?? true, ...(qbt.history?{source:ctx.state.session?'页面':'回调'}:{}), ...(body.expectedDeleteFiles === undefined ? {} : { expectedDeleteFiles: body.expectedDeleteFiles }) });
       ctx.status = result.failedCount ? 502 : 200; ctx.body = { data: result };
       const { dryRun, deleteFiles, matchedCount, deletedCount, skippedCount, failedCount } = result;
       log('qbittorrent.cleanup.finished', { dryRun, deleteFiles, matchedCount, deletedCount, skippedCount, failedCount });

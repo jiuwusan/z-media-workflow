@@ -42,7 +42,7 @@ export function createApp({ config, setup, servicesFactory = createServices, ser
       let prepared;
       const configured = setup.complete(ctx, candidate => { prepared = servicesFactory(candidate,{autoStart:false}); });
       activate(configured, prepared);
-      services.workflow?.start?.();
+      if(services.start)services.start();else services.workflow?.start?.();
       ctx.status = 201; ctx.body = { data: { initialized: true } }; return;
     }
     if (!routes && ctx.path === '/health') { ctx.body = { data: { status: 'ok', initialized: false } }; return; }

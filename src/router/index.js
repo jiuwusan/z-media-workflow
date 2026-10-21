@@ -35,6 +35,13 @@ export function createRouter(config, services) {
   router.put('/api/config', admin, configuration.save);
   router.get('/api/qbittorrent/completion-notification', admin, qbt.completionNotification);
   router.get('/api/qbittorrent/added-notification', admin, qbt.addedNotification);
+  if(services.qbittorrent?.history){
+    router.get('/api/qbittorrent/cleanup-history',admin,ctx=>{ctx.body={data:services.qbittorrent.history.list(pagination(ctx.query))};});
+    router.get('/api/qbittorrent/cleanup-history/:id',admin,ctx=>{
+      if(!/^[1-9][0-9]*$/.test(ctx.params.id)||!Number.isSafeInteger(Number(ctx.params.id)))ctx.throw(400,'清理记录 ID 无效');
+      ctx.body={data:services.qbittorrent.history.get(Number(ctx.params.id))};
+    });
+  }
   router.put('/api/qbittorrent/added-notification', admin, qbt.setAddedNotification);
   router.put('/api/qbittorrent/completion-notification', admin, qbt.setCompletionNotification);
   router.get('/api/qbittorrent/rss', admin, qbt.rss);

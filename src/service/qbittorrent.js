@@ -38,23 +38,27 @@ export class QbittorrentService {
   torrents() { return this.http('torrents/info', { query: { filter: 'all' } }); }
   cleanupSettings() { return this.cleanupStore.get(); }
   saveCleanupSettings(settings) { return this.cleanupStore.set(settings); }
-  async cleanupMissingFiles({ dryRun = true, deleteFiles = this.cleanupSettings().deleteFiles, expectedDeleteFiles } = {}) {
+  saveCleanupHistory(result){if(!this.history)return;try{this.history.save(result);}catch(error){this.cleanupStorageError=error;throw error;}}
+  async cleanupMissingFiles({ dryRun = true, deleteFiles = this.cleanupSettings().deleteFiles, expectedDeleteFiles, source='页面' } = {}) {
     if (typeof dryRun !== 'boolean') throw new AppError('dryRun 必须为布尔值');
     if (typeof deleteFiles !== 'boolean') throw new AppError('deleteFiles 必须为布尔值');
     if (expectedDeleteFiles !== undefined && expectedDeleteFiles !== deleteFiles) throw new AppError('清理设置已变化，请重新读取并确认', 409);
     if (this.cleanupRunning) throw new AppError('种子清理正在执行，请稍后重试', 409);
+    if(this.cleanupStorageError)throw new AppError('清理持久层不可用，请检查后重启',503);
     this.cleanupRunning = true;
+    let result;
     try {
+      result=this.history?.begin({dryRun,deleteFiles,source},this.sourceUrl);
       const torrents = await this.torrents();
       if (!Array.isArray(torrents)) throw new AppError('qBittorrent 种子列表无效', 502);
       const candidates = torrents.filter(torrent => torrent?.state === 'missingFiles');
       if (candidates.some(torrent => typeof torrent.hash !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(torrent.hash))) throw new AppError('qBittorrent 返回了无效的 torrent hash', 502);
       const unique = [...new Map(candidates.map(torrent => [torrent.hash.toLowerCase(), torrent])).values()];
-      const result = { dryRun, deleteFiles, matchedCount: unique.length, deletedCount: 0, skippedCount: 0, failedCount: 0, items: [] };
-      for (const torrent of unique) {
-        const hash = torrent.hash.toLowerCase();
-        const entry = { hash, name: torrent.name, state: 'missingFiles', status: 'would_delete' };
-        result.items.push(entry);
+      result??={dryRun,deleteFiles,matchedCount:0,deletedCount:0,skippedCount:0,failedCount:0,items:[]};
+      result.matchedCount=unique.length;result.items=unique.map(torrent=>({hash:torrent.hash.toLowerCase(),name:redact(torrent.name,[this.cleanupSecret]),state:'missingFiles',status:dryRun?'would_delete':'queued'}));
+      this.saveCleanupHistory(result);
+      for (const entry of result.items) {
+        const hash=entry.hash;
         if (dryRun) continue;
         try {
           let current;
@@ -62,8 +66,9 @@ export class QbittorrentService {
           catch (error) { if (error.status !== 404) throw error; }
           if (!current || current.state !== 'missingFiles') {
             entry.status = 'skipped'; entry.reason = current ? '种子状态已恢复或变化' : '种子已不存在';
-            result.skippedCount++; continue;
+            result.skippedCount++;this.saveCleanupHistory(result); continue;
           }
+          entry.phase='prepared';entry.status='prepared';this.saveCleanupHistory(result);
           let deleteError;
           try { await this.http('torrents/delete', { method: 'POST', form: { hashes: hash, deleteFiles } }); }
           catch (error) { deleteError = error; }
@@ -74,13 +79,16 @@ export class QbittorrentService {
             if (attempt < 2) await sleep(200);
           }
           if (!removed) throw deleteError ?? new AppError('删除后种子仍存在，未能确认清理完成', 502);
-          entry.status = 'deleted'; result.deletedCount++;
+          entry.status = 'deleted';entry.phase='completed'; result.deletedCount++;
         } catch (error) {
+          if(this.cleanupStorageError)throw error;
           entry.status = 'failed'; entry.error = redact(error.message, [this.cleanupSecret]); result.failedCount++;
         }
+        this.saveCleanupHistory(result);
       }
+      if(this.history){result.status=result.items.some(i=>i.phase==='prepared')?'interrupted':result.failedCount?'failed':dryRun?'preview':'completed';this.saveCleanupHistory(result);}
       return result;
-    } finally { this.cleanupRunning = false; }
+    } catch(error){if(result&&this.history&&!this.cleanupStorageError){result.status=result.items.some(i=>i.phase==='prepared')?'interrupted':'failed';result.error=redact(error.message,[this.cleanupSecret]);this.saveCleanupHistory(result);}throw error;} finally { this.cleanupRunning = false; }
   }
   categories() { return this.http('torrents/categories'); }
   rss() { return this.http('rss/items', { query: { withData: true } }); }
