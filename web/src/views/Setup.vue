@@ -72,7 +72,7 @@ async function save() {
           <el-form-item label="下载回调认证"><el-switch v-model="form.WEBHOOK_AUTH_ENABLED" aria-label="下载回调认证" /></el-form-item>
           <p class="muted">回调令牌会自动生成并保存。清理下载文件默认关闭，可在登录后的“种子清理”中设置。</p>
           <p>游标：{{ cursorChoice?.mode === 'import' ? '同步所选数据' : '已跳过，使用空游标' }}</p>
-          <p class="muted">保存后即可登录。后续配置在“基础配置”页面修改。请备份数据目录中的 passkey 文件，用于找回账号和重置密码。</p>
+          <p class="muted">保存后即可登录。后续配置在“基础配置”页面修改。每次服务启动会生成新的 passkey，可从 Docker 日志或数据目录的 passkey 文件查看，用于找回账号和重置密码；重启后旧密钥失效。</p>
         </div>
         <div class="setup-actions"><el-button v-if="step > 0" @click="step--; error = ''">上一步</el-button><el-button v-if="step < 2" type="primary" native-type="submit">下一步</el-button><template v-else-if="step === 2"><el-button @click="chooseCursor('skip')">跳过</el-button><el-button type="primary" :disabled="!cursorPreview" @click="chooseCursor('import')">同步并继续</el-button></template><el-button v-else type="primary" native-type="submit" :loading="busy" :disabled="!csrf || !cursorChoice">保存并进入登录</el-button></div>
       </el-form>

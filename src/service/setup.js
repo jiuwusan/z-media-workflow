@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, openSync, writeFileSync, fsyncSync, closeSync, readFileSync } from 'node:fs';
+import { openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_CONFIG, runtimeConfig, validateConfig } from '../config/index.js';
 import { openWorkflowDatabase } from '../storage/database.js';
@@ -8,13 +8,31 @@ import { CursorRepository, parseCursorSnapshot } from '../storage/cursor-reposit
 import { digest } from '../util/credentials.js';
 import { AppError } from '../util/error.js';
 import { tokenEquals } from './auth.js';
+import { log } from '../util/logger.js';
 const allowed=['ADMIN_USERNAME','ADMIN_PASSWORD','PUBLIC_URL','QBT_URL','QBT_API_KEY','JELLYFIN_URL','JELLYFIN_API_KEY','DEEPSEEK_URL','DEEPSEEK_API_KEY','DEEPSEEK_MODEL','WORKFLOW_CALLBACK_URL','WEBHOOK_AUTH_ENABLED','WORKFLOW_API_TOKEN','COOKIE_SECURE','TRUST_PROXY','cursor'];
 export class SetupService {
+  #passkey;
   constructor(location=path.resolve('data')) {
     this.directory=path.extname(location)==='.json'?path.dirname(location):location;
     this.filename=path.join(this.directory,'config.json');
     this.database=openWorkflowDatabase(path.join(this.directory,'workflow.sqlite'));
-    this.store=new ApplicationRepository(this.database);this.config=runtimeConfig(this.store,this.directory);
+    try {
+      this.store=new ApplicationRepository(this.database);this.config=runtimeConfig(this.store,this.directory);
+      this.#passkey='v1:'+randomBytes(32).toString('hex');
+      const temporary=path.join(this.directory,`.passkey-${randomBytes(16).toString('hex')}`);
+      let fd;
+      try {
+        fd=openSync(temporary,'wx',0o600);writeFileSync(fd,this.#passkey+'\n');fsyncSync(fd);closeSync(fd);fd=undefined;
+        renameSync(temporary,path.join(this.directory,'passkey'));
+      } catch {
+        throw new AppError('passkey 保存失败，请检查数据目录权限',500);
+      } finally {
+        if(fd!==undefined)closeSync(fd);
+        try{unlinkSync(temporary);}catch(error){if(error.code!=='ENOENT')throw error;}
+      }
+      this.store.rotatePasskey(digest(this.#passkey));
+      log('recovery.passkey.generated',{passkey:this.#passkey,message:'本次启动的账号恢复密钥；服务重启后旧密钥失效'});
+    } catch(error) { this.database.close();throw error; }
     this.nonce=randomBytes(24).toString('hex');
     this.bootstrap={host:'0.0.0.0',port:3000,publicUrl:'http://localhost:3000/',trustProxy:false,shutdownMs:30000};
   }
@@ -31,11 +49,8 @@ export class SetupService {
     if(input.WORKFLOW_API_TOKEN!==undefined&&typeof input.WORKFLOW_API_TOKEN!=='string')throw new AppError('WORKFLOW_API_TOKEN 必须为字符串');
     const document={...DEFAULT_CONFIG,...fields,WORKFLOW_API_TOKEN:input.WORKFLOW_API_TOKEN||randomBytes(32).toString('hex'),torrentCleanup:{deleteFiles:false}};
     validateConfig(document,this.filename);
-    mkdirSync(this.directory,{recursive:true});const file=path.join(this.directory,'passkey');let key;
-    if(existsSync(file)){key=readFileSync(file,'utf8').trim();if(!/^v1:[a-f0-9]{64}$/.test(key))throw new AppError('已有 passkey 文件格式无效，请检查数据目录',500);}
-    else {key='v1:'+randomBytes(32).toString('hex');let fd;try{fd=openSync(file,'wx',0o600);writeFileSync(fd,key+'\n');fsyncSync(fd);}catch{throw new AppError('passkey 保存失败，请检查数据目录权限',500);}finally{if(fd!==undefined)closeSync(fd);}}
     const configured=this.database.transaction(()=>{
-      this.store.initialize(document,digest(key),()=>new CursorRepository(this.database).importSnapshot(snapshot));
+      this.store.initialize(document,digest(this.#passkey),()=>new CursorRepository(this.database).importSnapshot(snapshot));
       this.store.audit.append('初始化',this.store.readConfig().revision,{}, {cursorSync:{mode:cursor.mode,...new CursorRepository(this.database).summary()}});
       const config=runtimeConfig(this.store,this.directory);prepare(config);return config;
     });

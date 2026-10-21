@@ -44,6 +44,12 @@ export class ApplicationRepository {
     });
   }
   replacePassword(password, source='恢复流程') { return this.updateConfig({ADMIN_PASSWORD:password},{source}); }
+  rotatePasskey(passkeyDigest) {
+    this.database.transaction(() => {
+      this.db.prepare('UPDATE credentials SET passkey_digest=? WHERE id=1').run(passkeyDigest);
+      this.db.exec('DELETE FROM recovery_tokens');
+    });
+  }
   attempt(namespace,ip,now=Date.now()) {
     return this.database.transaction(() => {
       this.db.prepare('DELETE FROM auth_attempts WHERE expires<=?').run(now);
