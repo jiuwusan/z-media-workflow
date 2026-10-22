@@ -7,6 +7,20 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { writeTestConfig as writeConfigFile, testStore,readTestConfig,closeTestDatabases } from './helpers/application.js';
 const admin = 'admin-token-at-least-24-characters', webhook = 'webhook-token-at-least-24-characters';
+
+test('skip review requires admin and CSRF and only accepts a media ID',async t=>{
+  const {req,login,services}=await setup(t),calls=[];
+  services.workflow.skip=(jobId,itemId)=>{calls.push({jobId,itemId});return {id:jobId,status:'completed',items:[{itemId,status:'skipped'}]};};
+  const route='/api/workflows/job/skip';
+  assert.equal((await req(route,{method:'POST'})).status,401);
+  assert.equal((await req(route,{method:'POST',headers:{Authorization:`Bearer ${webhook}`}})).status,401);
+  const headers=await login();
+  assert.equal((await req(route,{method:'POST',headers:{Cookie:headers.Cookie,'Content-Type':'application/json'},body:'{"itemId":"a"}'})).status,403);
+  for(const body of [{},[],{itemId:1},{itemId:'a',force:true}])assert.equal((await req(route,{method:'POST',headers,body:JSON.stringify(body)})).status,400);
+  assert.equal(calls.length,0);
+  const response=await req(route,{method:'POST',headers,body:'{"itemId":"a"}'});
+  assert.equal(response.status,200);assert.equal((await response.json()).data.items[0].status,'skipped');assert.deepEqual(calls,[{jobId:'job',itemId:'a'}]);
+});
 test('naming settings require admin and CSRF, save only queried categories and apply immediately', async t => {
   const { req, login, config, services } = await setup(t);
   const root = mkdtempSync(path.join(tmpdir(), 'naming-settings-')); t.after(() => (closeTestDatabases(root),rmSync(root, { recursive: true, force: true })));

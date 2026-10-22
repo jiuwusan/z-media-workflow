@@ -38,6 +38,11 @@ export function workflowController(workflow, mediaLibrary, jellyfin) {
     get(ctx) { ctx.body = { data: workflow.get(ctx.params.jobId) }; },
     retry(ctx) { accepted(ctx, workflow.retry(ctx.params.jobId)); },
     confirm(ctx) { const b = ctx.request.body ?? {}; accepted(ctx, workflow.confirm(ctx.params.jobId, text(b.itemId, '媒体 ID'), text(b.candidateId, '候选 ID'))); },
+    skip(ctx) {
+      const b=ctx.request.body;
+      if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>k!=='itemId'))throw new AppError('仅接受媒体 ID');
+      ctx.body={data:workflow.skip(ctx.params.jobId,text(b.itemId,'媒体 ID',{max:200}))};
+    },
     search(ctx) { const b = ctx.request.body ?? {}; accepted(ctx, workflow.search(ctx.params.jobId, text(b.itemId, '媒体 ID'), { name: b.name, year: b.year })); },
     async unidentified(ctx) { ctx.body = { data: await mediaLibrary.unidentified({ ...pagination(ctx.query), libraryId: ctx.query.libraryId, type: mediaType(ctx.query.type) }) }; }
   };

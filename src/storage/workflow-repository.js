@@ -23,7 +23,13 @@ export class WorkflowRepository {
   }
   summary() {
     const counts = Object.fromEntries(this.db.prepare('SELECT status, count(*) AS n FROM workflow_jobs GROUP BY status').all().map(r => [r.status, r.n]));
-    return { counts, queued: this.db.prepare("SELECT count(*) AS n FROM workflow_actions WHERE status='queued'").get().n, running: Boolean(this.db.prepare("SELECT 1 FROM workflow_actions WHERE status='running' LIMIT 1").get()) };
+    const pendingReviewCount = this.db.prepare(`SELECT count(*) AS n FROM (
+      SELECT json_extract(j.source_scope,'$.jellyfinUrl'), json_extract(i.payload,'$.itemId')
+      FROM workflow_items i JOIN workflow_jobs j ON j.id=i.job_id
+      WHERE i.status='needs_review' AND json_type(i.payload,'$.itemId')='text'
+      GROUP BY json_extract(j.source_scope,'$.jellyfinUrl'), json_extract(i.payload,'$.itemId')
+    )`).get().n;
+    return { counts, pendingReviewCount, queued: this.db.prepare("SELECT count(*) AS n FROM workflow_actions WHERE status='queued'").get().n, running: Boolean(this.db.prepare("SELECT 1 FROM workflow_actions WHERE status='running' LIMIT 1").get()) };
   }
   prune(now = Date.now(), reserve = false) {
     const work = () => {
@@ -60,6 +66,32 @@ export class WorkflowRepository {
   }
   insertAction(jobId, kind, payload) {
     this.db.prepare('INSERT INTO workflow_actions(id,job_id,kind,status,payload,created_at) VALUES(?,?,?,?,?,?)').run(randomUUID(), jobId, kind, 'queued', JSON.stringify(payload), timestamp());
+  }
+  skipReview(jobId, itemId, scope) {
+    return this.database.transaction(() => {
+      const target=this.get(jobId);
+      if(target.sourceScope.jellyfinUrl!==scope.jellyfinUrl)throw new AppError('任务来源 Jellyfin 地址已变化，请在对应服务处理',409);
+      if(target.status!=='needs_review')throw new AppError('该任务当前不允许跳过',409);
+      if(!target.items.some(i=>i.itemId===itemId&&i.status==='needs_review'))throw new AppError('待确认媒体不存在',404);
+      const rows=this.db.prepare(`SELECT DISTINCT j.id FROM workflow_jobs j JOIN workflow_items i ON i.job_id=j.id
+        WHERE json_extract(j.source_scope,'$.jellyfinUrl')=? AND json_extract(i.payload,'$.itemId')=? AND i.status='needs_review'`).all(scope.jellyfinUrl,itemId);
+      const jobs=rows.map(row=>this.get(row.id));
+      for(const job of jobs){
+        if(['queued','running'].includes(job.status)||this.db.prepare("SELECT 1 FROM workflow_actions WHERE job_id=? AND status IN ('queued','running')").get(job.id))throw new AppError('该媒体仍有排队或执行中的任务，请完成后再跳过',409);
+        if([...job.items,...(job.recovery??[])].some(i=>i.itemId===itemId&&i.intent&&i.phase!=='completed'))throw new AppError('该媒体存在尚未核对的写入结果，请核对后再跳过',409);
+      }
+      const now=timestamp();
+      for(const job of jobs){
+        for(const entry of job.items)if(entry.itemId===itemId&&entry.status==='needs_review'){
+          entry.status='skipped';entry.skippedAt=now;entry.message='已手动跳过本次确认，第三方资料补齐后可重新识别';delete entry.error;
+        }
+        if(job.recovery)job.recovery=job.recovery.filter(i=>i.itemId!==itemId);
+        job.status=job.items.some(i=>i.status==='needs_review')?'needs_review':job.items.some(i=>i.status==='failed')?'failed':'completed';
+        job.stage=job.status==='needs_review'?'等待人工确认':job.status==='failed'?'存在失败条目':'完成（含手动跳过）';job.updatedAt=now;
+        this.saveRecord(job);
+      }
+      return this.get(jobId);
+    });
   }
   enqueueAction(jobId, { kind, payload }) {
     return this.database.transaction(() => {

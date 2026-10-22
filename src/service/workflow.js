@@ -305,12 +305,16 @@ export class WorkflowService {
     for (const entry of job.recovery ?? []) if (!failed.some(i => i.itemId === entry.itemId)) failed.push(entry);
     if (!['failed', 'needs_review'].includes(job.status) || (job.status !== 'failed' && !failed.length)) throw new AppError('仅失败任务或失败条目可以重试', 409);
     if (!sameScope(job.sourceScope, this.scope)) throw new AppError('任务来源服务地址已变化，请重新发起操作', 409);
-    return this.enqueue(job.input, failed, { scanLibrary: false, parentJobId: id, skipItemIds: [...new Set([...(job.skipItemIds ?? []), ...job.items.filter(i => ['completed', 'needs_review'].includes(i.status)).map(i => i.itemId)])] });
+    return this.enqueue(job.input, failed, { scanLibrary: false, parentJobId: id, skipItemIds: [...new Set([...(job.skipItemIds ?? []), ...job.items.filter(i => ['completed', 'needs_review', 'skipped'].includes(i.status)).map(i => i.itemId)])] });
   }
   confirm(id, itemId, candidateId) {
     this.ensureCapacity();
     const job = this.persist(() => this.repository.enqueueAction(id, { kind: 'confirm', payload: { itemId, candidateId } }));
     if (this.ready) this.drain(); return this.get(job.id);
+  }
+  skip(id,itemId) {
+    this.ensureCapacity();
+    return this.persist(()=>this.repository.skipReview(id,itemId,this.scope));
   }
   search(id, itemId, identity) {
     this.ensureCapacity();

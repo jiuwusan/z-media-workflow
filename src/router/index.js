@@ -71,6 +71,7 @@ export function createRouter(config, services) {
   router.get('/api/workflows/:jobId', admin, workflow.get);
   router.post('/api/workflows/:jobId/retry', admin, workflow.retry);
   router.post('/api/workflows/:jobId/confirm', admin, workflow.confirm);
+  router.post('/api/workflows/:jobId/skip', admin, workflow.skip);
   router.post('/api/workflows/:jobId/search', admin, workflow.search);
   return router;
 }

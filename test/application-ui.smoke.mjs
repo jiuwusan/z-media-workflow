@@ -53,6 +53,27 @@ for(const mode of ['skip','import'])test(`database initialization ${mode}, recov
   await page.getByRole('heading',{name:'登录工作空间',exact:true}).waitFor();
   await page.getByRole('textbox',{name:'用户名',exact:true}).fill('admin');await page.getByRole('textbox',{name:'密码',exact:true}).fill('reset-password');
   await page.getByRole('button',{name:'进入管理面板',exact:true}).click();
+  if(mode==='skip'){
+    const workflow=app.services.workflow,repository=workflow.repository,jobs=[];
+    for(let i=0;i<2;i++){
+      const job=repository.accept({input:{dryRun:true},sourceScope:workflow.scope}),action=repository.claimNext();
+      job.status='needs_review';job.items=[{itemId:'f'.repeat(32),originalName:'新上线测试媒体',type:'Movie',source:'New release',candidates:[],status:'needs_review'}];
+      repository.save(job,{actionId:action.id,actionStatus:'completed'});jobs.push(job);
+    }
+    await page.goto(base+'/');
+    const metric=page.locator('.metric').filter({has:page.getByText('待确认',{exact:true})});
+    await metric.locator('.metric-value').getByText('1',{exact:true}).waitFor();
+    await page.goto(base+`/jobs/${jobs[0].id}`);
+    await page.getByRole('button',{name:'跳过',exact:true}).click();
+    await page.getByRole('button',{name:'取消',exact:true}).click();
+    assert.equal(repository.get(jobs[0].id).status,'needs_review');
+    await page.getByRole('button',{name:'跳过',exact:true}).click();
+    await page.getByRole('button',{name:'跳过本次确认',exact:true}).click();
+    await page.getByText('已跳过',{exact:true}).waitFor();
+    for(const job of jobs)assert.equal(repository.get(job.id).items[0].status,'skipped');
+    await page.reload();await page.getByText('已跳过',{exact:true}).waitFor();
+    await page.goto(base+'/');await metric.locator('.metric-value').getByText('0',{exact:true}).waitFor();
+  }
   await page.getByRole('link',{name:'基础配置',exact:true}).click();await page.getByRole('heading',{name:'配置修改记录',exact:true}).waitFor();
   await page.getByRole('link',{name:'种子清理',exact:true}).click();
   await page.getByRole('button',{name:'预览清理',exact:true}).click();
