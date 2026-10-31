@@ -28,8 +28,8 @@ onMounted(load);
   <el-form label-position="top" @submit.prevent="saveRule">
     <el-form-item label="规则名称"><el-input v-model="ruleName" :disabled="editing" maxlength="200" /></el-form-item>
     <el-form-item><el-checkbox v-model="ruleForm.useRegex">使用正则表达式</el-checkbox></el-form-item>
-    <el-form-item label="包含条件"><el-input v-model="ruleForm.mustContain" placeholder="关键词或正则表达式" /></el-form-item>
-    <el-form-item label="排除条件"><el-input v-model="ruleForm.mustNotContain" /></el-form-item>
+    <el-form-item label="包含条件"><el-input v-model="ruleForm.mustContain" type="textarea" :autosize="{ minRows: 2, maxRows: 8 }" placeholder="关键词或正则表达式" /></el-form-item>
+    <el-form-item label="排除条件"><el-input v-model="ruleForm.mustNotContain" type="textarea" :autosize="{ minRows: 2, maxRows: 8 }" /></el-form-item>
     <el-form-item label="指定分类">
       <el-select v-model="ruleForm.assignedCategory" filterable style="width:100%">
         <el-option label="未分类" value="" />
