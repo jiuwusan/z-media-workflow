@@ -12,15 +12,15 @@ const input={ADMIN_USERNAME:'admin',ADMIN_PASSWORD:'first-password',QBT_API_KEY:
 test('production service assembly requires an initialized persistent configuration',()=>{
   assert.throws(()=>createServices({adminUsername:'admin',adminPassword:'test-password'}),e=>e.status===503);
 });
-function ctx(setup,body) {return {request:{body},cookies:{get:()=>setup.nonce,set:()=>{}},get:()=>setup.nonce};}
+function setupCommand(setup,input) {return {input,cookieToken:setup.nonce,csrfToken:setup.nonce};}
 test('setup ignores invalid legacy files, initializes once and recovery invalidates old sessions', async t=>{
   const dir=mkdtempSync(path.join(tmpdir(),'app-init-'));
   writeFileSync(path.join(dir,'config.json'),'broken legacy');writeFileSync(path.join(dir,'media-cursors.json'),'broken legacy');
   const setup=new SetupService(dir);t.after(()=>{setup.close();rmSync(dir,{recursive:true,force:true});});
   assert.equal(setup.initialized,false);
-  assert.throws(()=>setup.complete(ctx(setup,{...input,cursor:{mode:'import',data:'bad'}})));
-  const config=setup.complete(ctx(setup,input));
-  assert.equal(setup.initialized,true);assert.throws(()=>setup.complete(ctx(setup,input)),e=>e.status===409);
+  assert.throws(()=>setup.complete(setupCommand(setup,{...input,cursor:{mode:'import',data:'bad'}})));
+  const config=setup.complete(setupCommand(setup,input));
+  assert.equal(setup.initialized,true);assert.throws(()=>setup.complete(setupCommand(setup,input)),e=>e.status===409);
   const passkey=readFileSync(path.join(dir,'passkey'),'utf8').trim();
   const auth=new AuthService(config),session=await auth.login('admin','first-password','ip');
   const recovery=new RecoveryService(config.store);
@@ -37,7 +37,7 @@ test('setup ignores invalid legacy files, initializes once and recovery invalida
 test('recovery HTTP requires a fresh nonce and initialized setup rejects requests before parsing',async t=>{
   const dir=mkdtempSync(path.join(tmpdir(),'app-recovery-http-')),setup=new SetupService(dir);
   t.after(()=>{setup.close();rmSync(dir,{recursive:true,force:true});});
-  const config=setup.complete(ctx(setup,input)),auth=new AuthService(config),recovery=new RecoveryService(config.store);
+  const config=setup.complete(setupCommand(setup,input)),auth=new AuthService(config),recovery=new RecoveryService(config.store);
   const server=createApp({config,setup,services:{auth,recovery,mediaLibrary:{}}}).listen(0,'127.0.0.1');
   await new Promise(r=>server.once('listening',r));t.after(()=>server.close());
   const base=`http://127.0.0.1:${server.address().port}`;

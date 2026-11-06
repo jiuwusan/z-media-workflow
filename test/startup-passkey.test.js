@@ -8,7 +8,7 @@ import { RecoveryService } from '../src/service/recovery.js';
 import { digest } from '../src/util/credentials.js';
 
 const input={ADMIN_USERNAME:'admin',ADMIN_PASSWORD:'first-password',QBT_API_KEY:'mock-qbt',JELLYFIN_API_KEY:'mock-jelly',DEEPSEEK_API_KEY:'mock-deep',cursor:{mode:'skip'}};
-const context=setup=>({request:{body:input},cookies:{get:()=>setup.nonce,set:()=>{}},get:()=>setup.nonce});
+const command=setup=>({input,cookieToken:setup.nonce,csrfToken:setup.nonce});
 function fixture(t,close=()=>{}){
   const dir=mkdtempSync(path.join(tmpdir(),'startup-passkey-')),messages=[];
   t.mock.method(console,'log',value=>messages.push(JSON.parse(value)));
@@ -20,7 +20,7 @@ test('startup publishes one fresh passkey before setup and initialization uses t
   let setup;const {dir,messages,file}=fixture(t,()=>setup?.close());setup=new SetupService(dir);
   const key=readFileSync(file,'utf8').trim();assert.match(key,/^v1:[a-f0-9]{64}$/);
   assert.deepEqual(messages.filter(m=>m.event==='recovery.passkey.generated').map(m=>m.passkey),[key]);
-  const config=setup.complete(context(setup));
+  const config=setup.complete(command(setup));
   assert.equal(setup.store.credential().passkeyDigest,digest(key));
   assert.equal(new RecoveryService(setup.store).verify(key,'first').username,'admin');
   assert.equal(readFileSync(file,'utf8').trim(),key);assert.equal(messages.length,1);
@@ -29,7 +29,7 @@ test('startup publishes one fresh passkey before setup and initialization uses t
 
 test('every restart replaces the key and invalidates old recovery tokens without resetting settings or bans',t=>{
   let setup;const {dir,file,messages}=fixture(t,()=>setup?.close());setup=new SetupService(dir);
-  setup.complete(context(setup));
+  setup.complete(command(setup));
   const oldKey=readFileSync(file,'utf8').trim(),oldToken=new RecoveryService(setup.store).verify(oldKey,'first').token;
   setup.store.attempt('recovery','limited');const before=setup.store.readConfig();setup.close();
   setup=new SetupService(dir);

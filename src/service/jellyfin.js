@@ -1,6 +1,7 @@
-import { createHttpClient, sleep } from '../util/http.js';
+import { createHttpClient } from '../gateway/http.js';
+import { sleep } from '../util/timing.js';
 import { AppError } from '../util/error.js';
-import { normalizeName, providerEntries } from '../util/media.js';
+import { normalizeName, providerEntries } from '../domain/media.js';
 // UpdateItem replaces these values, so load the editable DTO before changing identification.
 const metadataFields = 'Path,ProviderIds,OriginalTitle,CustomRating,DateCreated,Genres,Overview,People,ProductionLocations,Settings,SortName,SpecialEpisodeNumbers,Studios,Taglines,Tags,AirTime,RemoteTrailers,MediaStreams';
 function premiereYear(item) {

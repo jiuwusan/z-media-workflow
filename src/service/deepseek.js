@@ -1,5 +1,5 @@
-import { createHttpClient } from '../util/http.js';
-import { cleanMovieName, hasIdentity, isLaterSeasonCandidate, validateIdentity } from '../util/media.js';
+import { createHttpClient } from '../gateway/http.js';
+import { cleanMovieName, hasIdentity, isLaterSeasonCandidate, validateIdentity } from '../domain/media.js';
 import { AppError } from '../util/error.js';
 const systemPrompt = `你是影视文件名称信息提取助手，帮助整理用于 Jellyfin 家庭影院的电影和电视剧。
 名称和年份的信息来源只能是输入的 source。你的任务是清洗、提取原文，不是根据影视资料库或记忆识别某部作品。不得用影视知识、译名、候选结果或当前日期补全、替换名称和年份。

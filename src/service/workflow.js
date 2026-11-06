@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AppError } from '../util/error.js';
-import { sleep } from '../util/http.js';
-import { compareProviderIdentity, hasChineseName, hasIdentity, isLaterSeasonCandidate, mediaSource, movieSearchNames, selectCandidate, validateIdentity } from '../util/media.js';
+import { sleep } from '../util/timing.js';
+import { compareProviderIdentity, hasChineseName, hasIdentity, isLaterSeasonCandidate, mediaSource, movieSearchNames, selectCandidate, validateIdentity } from '../domain/media.js';
 import { log, redact } from '../util/logger.js';
 import { openWorkflowDatabase } from '../storage/database.js';
 import { WorkflowRepository, sourceScope } from '../storage/workflow-repository.js';

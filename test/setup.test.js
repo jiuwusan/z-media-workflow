@@ -39,8 +39,8 @@ test('setup requires CSRF, validates configuration and never writes rejected sub
 test('services that cannot initialize leave setup available without persisting credentials', async t => {
   const root = mkdtempSync(path.join(tmpdir(), 'workflow-setup-')); t.after(() => {setup.close();closeTestDatabases(root);rmSync(root, { recursive: true, force: true });});
   const file = path.join(root, 'config.json'), setup = new SetupService(file);
-  const ctx = { request: { body: input }, cookies: { get: () => setup.nonce }, get: () => setup.nonce };
-  assert.throws(() => setup.complete(ctx, () => { throw new Error('cannot initialize'); }), /cannot initialize/);
+  const command = { input, cookieToken: setup.nonce, csrfToken: setup.nonce };
+  assert.throws(() => setup.complete(command, () => { throw new Error('cannot initialize'); }), /cannot initialize/);
   assert.equal(existsSync(file), false); assert.equal(setup.initialized, false);
 });
 test('setup persists defaults once, activates login immediately and disables further setup', async t => {

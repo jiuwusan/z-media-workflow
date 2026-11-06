@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { AppError } from '../util/error.js';
-import { containsPath, isVideo, mapPath, normalizePath } from '../util/media.js';
-import { MediaCursorStore } from '../util/media-cursor.js';
+import { containsPath, isVideo, mapPath, normalizePath } from '../domain/media.js';
+import { MediaCursorStore } from '../storage/media-cursor.js';
 export class MediaLibraryService {
   constructor(config, jellyfin, cursors = new MediaCursorStore(config.mediaCursorFile, config.jellyfinUrl)) { this.config = config; this.jellyfin = jellyfin; this.cursors = cursors; }
   async track(items, filters = {}) {

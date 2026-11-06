@@ -1,4 +1,4 @@
-import { normalizeName, providerEntries } from '../util/media.js';
+import { normalizeName, providerEntries } from '../domain/media.js';
 const sameProviders = (a, b) => JSON.stringify(providerEntries(a).sort()) === JSON.stringify(providerEntries(b).sort());
 export const sameScope = (a, b) => a?.jellyfinUrl === b?.jellyfinUrl && a?.qbtUrl === b?.qbtUrl;
 export function matchesExpectedMedia(item, intent) {

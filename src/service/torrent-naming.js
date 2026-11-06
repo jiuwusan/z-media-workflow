@@ -1,8 +1,8 @@
-import { episodeFilename, renamedEpisodePath } from '../util/torrent-naming.js';
+import { episodeFilename, renamedEpisodePath } from '../domain/torrent-naming.js';
 import { AppError } from '../util/error.js';
-import { sleep } from '../util/http.js';
+import { sleep } from '../util/timing.js';
 import { redact } from '../util/logger.js';
-import { isSeriesCategory } from '../util/torrent-categories.js';
+import { isSeriesCategory } from '../domain/torrent-categories.js';
 import { sourceScope } from '../storage/workflow-repository.js';
 
 export class TorrentNamingService {

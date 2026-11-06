@@ -11,7 +11,7 @@ import { CursorRepository } from '../storage/cursor-repository.js';
 import { ConfigurationService } from './configuration.js';
 import { RecoveryService } from './recovery.js';
 import { CleanupRepository } from '../storage/cleanup-repository.js';
-import { sleep } from '../util/http.js';
+import { sleep } from '../util/timing.js';
 export function createServices(config,{autoStart=true}={}) {
   if(!config.store?.initialized)throw new AppError('请通过首次运行引导初始化数据库配置',503);
   const services = { qbittorrent: new QbittorrentService(config), jellyfin: new JellyfinService(config), deepseek: new DeepseekService(config), auth: new AuthService(config) };

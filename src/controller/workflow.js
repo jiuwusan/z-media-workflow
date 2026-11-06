@@ -1,6 +1,6 @@
 import { AppError } from '../util/error.js';
 import { pagination, scanInput, mediaType, text } from '../util/validation.js';
-import { validateIdentity } from '../util/media.js';
+import { validateIdentity } from '../domain/media.js';
 export function workflowController(workflow, mediaLibrary, jellyfin) {
   const accepted = (ctx, job) => { ctx.status = 202; ctx.body = { data: job }; };
   return {

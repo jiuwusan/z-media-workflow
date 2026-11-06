@@ -1,7 +1,7 @@
 import { SetupService } from './service/setup.js';
 import { createApp } from './app.js';
 import { log } from './util/logger.js';
-import { saveRuntimeAddress } from './util/runtime-address.js';
+import { saveRuntimeAddress } from './config/runtime-address.js';
 import { LifecycleService } from './service/lifecycle.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';

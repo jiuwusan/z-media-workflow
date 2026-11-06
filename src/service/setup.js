@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync } from 'node:fs';
+import { writeRecoveryPasskey } from '../storage/recovery-passkey.js';
 import path from 'node:path';
 import { DEFAULT_CONFIG, runtimeConfig, validateConfig } from '../config/index.js';
 import { openWorkflowDatabase } from '../storage/database.js';
@@ -19,17 +19,7 @@ export class SetupService {
     try {
       this.store=new ApplicationRepository(this.database);this.config=runtimeConfig(this.store,this.directory);
       this.#passkey='v1:'+randomBytes(32).toString('hex');
-      const temporary=path.join(this.directory,`.passkey-${randomBytes(16).toString('hex')}`);
-      let fd;
-      try {
-        fd=openSync(temporary,'wx',0o600);writeFileSync(fd,this.#passkey+'\n');fsyncSync(fd);closeSync(fd);fd=undefined;
-        renameSync(temporary,path.join(this.directory,'passkey'));
-      } catch {
-        throw new AppError('passkey 保存失败，请检查数据目录权限',500);
-      } finally {
-        if(fd!==undefined)closeSync(fd);
-        try{unlinkSync(temporary);}catch(error){if(error.code!=='ENOENT')throw error;}
-      }
+      writeRecoveryPasskey(this.directory,this.#passkey);
       this.store.rotatePasskey(digest(this.#passkey));
       log('recovery.passkey.generated',{passkey:this.#passkey,message:'本次启动的账号恢复密钥；服务重启后旧密钥失效'});
     } catch(error) { this.database.close();throw error; }
@@ -37,11 +27,11 @@ export class SetupService {
     this.bootstrap={host:'0.0.0.0',port:3000,publicUrl:'http://localhost:3000/',trustProxy:false,shutdownMs:30000};
   }
   get initialized(){return this.store.initialized;}
-  status(ctx){if(this.initialized)return {initialized:true};ctx.cookies.set('media_setup',this.nonce,{httpOnly:true,sameSite:'strict',signed:false,maxAge:1800000,path:'/'});return {initialized:false,csrfToken:this.nonce};}
-  complete(ctx,prepare=()=>{}) {
+  status(){return this.initialized?{initialized:true}:{initialized:false,csrfToken:this.nonce};}
+  complete(command,prepare=()=>{}) {
     if(this.initialized)throw new AppError('服务已完成初始化，不能重复配置',409);
-    if(!tokenEquals(ctx.cookies.get('media_setup',{signed:false}),this.nonce)||!tokenEquals(ctx.get('X-CSRF-Token'),this.nonce))throw new AppError('初始化 CSRF 校验失败，请刷新页面',403);
-    const input=ctx.request.body;
+    const {input,cookieToken,csrfToken}=command??{};
+    if(!tokenEquals(cookieToken,this.nonce)||!tokenEquals(csrfToken,this.nonce))throw new AppError('初始化 CSRF 校验失败，请刷新页面',403);
     if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>!allowed.includes(k)))throw new AppError('初始化参数无效');
     if(!input.cursor||!['import','skip'].includes(input.cursor.mode)||Object.keys(input.cursor).some(k=>!['mode','data'].includes(k)))throw new AppError('请选择同步游标或跳过');
     const snapshot=input.cursor.mode==='import'?parseCursorSnapshot(input.cursor.data):{version:1,libraries:{}};
@@ -54,7 +44,7 @@ export class SetupService {
       this.store.audit.append('初始化',this.store.readConfig().revision,{}, {cursorSync:{mode:cursor.mode,...new CursorRepository(this.database).summary()}});
       const config=runtimeConfig(this.store,this.directory);prepare(config);return config;
     });
-    this.config=configured;ctx.cookies.set('media_setup',null,{signed:false,path:'/'});return configured;
+    this.config=configured;return configured;
   }
   close(){this.database.close();}
 }

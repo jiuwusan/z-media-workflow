@@ -37,8 +37,11 @@ jobs:
       - name: Install server dependencies
         run: npm ci
 
-      - name: Run tests
-        run: npm test
+      - name: Install UI dependencies
+        run: npm ci --prefix web --ignore-scripts
+
+      - name: Run full quality checks
+        run: npm run check
 
   publish:
     name: Build and publish image

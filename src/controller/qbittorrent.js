@@ -1,7 +1,7 @@
 import { text, validFeedUrl, pagination } from '../util/validation.js';
 import { AppError } from '../util/error.js';
 import { log } from '../util/logger.js';
-import { isSeriesCategory } from '../util/torrent-categories.js';
+import { isSeriesCategory } from '../domain/torrent-categories.js';
 import { validateConfig } from '../config/index.js';
 export function qbittorrentController(qbt, config) {
   return {

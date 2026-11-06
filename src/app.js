@@ -1,3 +1,5 @@
+import { setupController } from './controller/setup.js';
+import { ConfigurationService } from './service/configuration.js';
 import Koa from 'koa';
 import { bodyParser } from '@koa/bodyparser';
 import serve from 'koa-static';
@@ -10,12 +12,14 @@ import { redact, log } from './util/logger.js';
 import { AppError } from './util/error.js';
 import { LifecycleService } from './service/lifecycle.js';
 export function createApp({ config, setup, servicesFactory = createServices, services = setup && !setup.initialized ? {} : servicesFactory(config), lifecycle = new LifecycleService() }) {
+  const setupHTTP = setupController(setup);
   const app = new Koa(); app.proxy = config.trustProxy;
   let routes, allowedMethods;
   function activate(nextConfig = config, nextServices = services) {
     Object.assign(config, nextConfig); services = nextServices; services.auth ??= new AuthService(config); services.lifecycle = lifecycle;
     if(nextConfig.store)Object.defineProperty(config,'store',{value:nextConfig.store,enumerable:false,configurable:true});
     app.proxy = config.trustProxy; app.services = services;
+    services.configuration ??= new ConfigurationService(config);
     const router = createRouter(config, services); routes = router.routes(); allowedMethods = router.allowedMethods();
   }
   if (!setup || setup.initialized) activate();
@@ -36,11 +40,11 @@ export function createApp({ config, setup, servicesFactory = createServices, ser
     return next();
   });
   app.use(async (ctx, next) => {
-    if (ctx.path === '/api/setup/status' && ctx.method === 'GET') { ctx.body = { data: setup ? setup.status(ctx) : { initialized: true } }; return; }
+    if (ctx.path === '/api/setup/status' && ctx.method === 'GET') { ctx.body = { data: setupHTTP.status(ctx) }; return; }
     if (ctx.path === '/api/setup' && ctx.method === 'POST') {
       if (!setup) throw new AppError('服务已完成初始化', 409);
       let prepared;
-      const configured = setup.complete(ctx, candidate => { prepared = servicesFactory(candidate,{autoStart:false}); });
+      const configured = setupHTTP.complete(ctx, candidate => { prepared = servicesFactory(candidate,{autoStart:false}); });
       activate(configured, prepared);
       if(services.start)services.start();else services.workflow?.start?.();
       ctx.status = 201; ctx.body = { data: { initialized: true } }; return;

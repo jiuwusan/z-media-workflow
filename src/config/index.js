@@ -1,3 +1,4 @@
+import { DEFAULT_SERIES_CATEGORIES } from '../domain/torrent-categories.js';
 import { AppError } from '../util/error.js';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
@@ -10,7 +11,7 @@ export const DEFAULT_CONFIG = {
   QBT_URL: 'http://localhost:8080/', JELLYFIN_URL: 'http://localhost:8096/', DEEPSEEK_URL: 'https://api.deepseek.com/', DEEPSEEK_MODEL: 'deepseek-flash',
   WORKFLOW_API_TOKEN: '', WEBHOOK_AUTH_ENABLED: false, SESSION_TTL_MS: 28800000,
   QBT_PATH_PREFIX: '', JELLYFIN_PATH_PREFIX: '',
-  SERIES_CATEGORIES: [],
+  SERIES_CATEGORIES: DEFAULT_SERIES_CATEGORIES,
   REQUEST_TIMEOUT_MS: 15000, POLL_INTERVAL_MS: 2000, SCAN_TIMEOUT_MS: 600000, VERIFY_TIMEOUT_MS: 120000, LIBRARY_REFRESH_WAIT_MS: 10000,
   TORRENT_FILES_TIMEOUT_MS: 120000, INGEST_RETRIES: 2, MAX_JOBS: 200, MAX_QUEUE: 30, JOB_TTL_MS: 86400000, SHUTDOWN_TIMEOUT_MS: 30000,
   torrentCleanup: { deleteFiles: false }

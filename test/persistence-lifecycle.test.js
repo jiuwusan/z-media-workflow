@@ -13,7 +13,7 @@ test('production service assembly reopens the database beside config and rejects
   const dir = mkdtempSync(path.join(tmpdir(), 'workflow-lifecycle-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const setup=new SetupService(dir);
-  const config=setup.complete({request:{body:{ADMIN_USERNAME:'admin',ADMIN_PASSWORD:'test-password',QBT_API_KEY:'mockqbt',JELLYFIN_API_KEY:'mockjelly',DEEPSEEK_API_KEY:'mockdeep',cursor:{mode:'skip'}}},cookies:{get:()=>setup.nonce,set:()=>{}},get:()=>setup.nonce});
+  const config=setup.complete({input:{ADMIN_USERNAME:'admin',ADMIN_PASSWORD:'test-password',QBT_API_KEY:'mockqbt',JELLYFIN_API_KEY:'mockjelly',DEEPSEEK_API_KEY:'mockdeep',cursor:{mode:'skip'}},cookieToken:setup.nonce,csrfToken:setup.nonce});
   const a = createServices(config);
   const session = await a.auth.login(config.adminUsername, 'test-password', '127.0.0.1');
   const job = a.workflow.repository.accept({ input: { dryRun: true }, sourceScope: a.workflow.scope });
