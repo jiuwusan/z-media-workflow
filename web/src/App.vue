@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { DataAnalysis, Connection, Filter, Tickets, Film, Collection, EditPen, Bell, Delete, Tools, SwitchButton, Menu, ArrowRight } from '@element-plus/icons-vue';
 import { api, setSession } from './api/index.js';
+import InstallApp from './components/InstallApp.vue';
 const route = useRoute(), router = useRouter(), expanded = ref(false);
 const links = [{ path: '/', label: '概览', icon: DataAnalysis }, { path: '/library', label: '媒体库', icon: Collection }, { path: '/rss', label: '订阅管理', icon: Connection }, { path: '/download-rules', label: '下载规则', icon: Filter }, { path: '/jobs', label: '任务管理', icon: Tickets }, { path: '/media', label: '媒体识别', icon: Film }, { path: '/torrent-naming', label: '命名检查', icon: EditPen }, { path: '/notifications', label: '种子通知', icon: Bell }, { path: '/torrent-cleanup', label: '种子清理', icon: Delete }, { path: '/configuration', label: '基础配置', icon: Tools }];
 async function logout() { try { await api('/auth/logout', { method: 'POST' }); setSession(null); await router.push('/login'); } catch {} }
@@ -19,14 +20,25 @@ async function logout() { try { await api('/auth/logout', { method: 'POST' }); s
       <button class="logout" @click="logout"><el-icon><SwitchButton /></el-icon>退出登录</button>
     </aside>
     <main class="main" :class="{ 'main-rss': route.path === '/rss' }">
-      <header class="topbar"><div><button class="mobile-menu" aria-label="展开导航" @click="expanded = !expanded"><el-icon><Menu /></el-icon></button><span>工作空间</span><span class="breadcrumb-divider">/</span><strong>{{ route.meta.title }}</strong></div><span class="admin-chip"><span class="avatar">M</span>管理员</span></header>
+      <header class="topbar"><div><button class="mobile-menu" aria-label="展开导航" @click="expanded = !expanded"><el-icon><Menu /></el-icon></button><span>工作空间</span><span class="breadcrumb-divider">/</span><strong>{{ route.meta.title }}</strong></div><div class="topbar-actions"><span id="install-slot"></span><span class="admin-chip"><span class="avatar">M</span>管理员</span></div></header>
       <div class="workspace"><div class="page-heading"><div><div class="eyebrow">MEDIA WORKFLOW</div><h1>{{ route.meta.title }}</h1><p>{{ route.meta.subtitle }}</p></div><span class="workspace-badge">个人媒体中心</span></div><router-view :key="route.path" /></div>
     </main>
   </div>
+  <Teleport defer :to="['/login', '/setup', '/recover'].includes(route.path) ? 'body' : '#install-slot'">
+    <InstallApp :floating="['/login', '/setup', '/recover'].includes(route.path)" />
+  </Teleport>
 </template>
 <style scoped>
 .sidebar nav { min-height: 0; overflow-y: auto; }
 .brand, .nav-caption, .sidebar-note, .logout { flex-shrink: 0; }
+.topbar-actions { flex-shrink: 0; }
+@media (max-width: 640px) {
+  .topbar { gap: 8px; }
+  .topbar > div { gap: 8px; }
+  .topbar > div:first-child { min-width: 0; }
+  .topbar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar > div:first-child > span { display: none; }
+}
 @media (min-width: 901px) {
   .main-rss { height: 100dvh; display: flex; flex-direction: column; min-height: 0; }
   .main-rss > .topbar { flex-shrink: 0; }
