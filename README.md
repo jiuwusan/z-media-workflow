@@ -8,6 +8,8 @@
 
 静态资源通过 Vite BASE_URL 解析，manifest 内部使用相对路径并省略 id，保持部署路径下的应用身份。离线安装交互回归包含在 npm test / npm run check；真实设备安装和浏览器 UI 需单独验证。
 
+页面使用通用 `mobile-web-app-capable` 标签，通过 manifest 的 `display: standalone` 声明独立应用模式；iOS 主屏幕图标继续由 `apple-touch-icon` 提供。
+
 
 Koa + Vue 3 媒体工作流与中文管理面板，使用 SQLite 持久化任务。qBittorrent RSS 下载完成后发送回调，服务只向种子视频文件所属的 Jellyfin 媒体库提交增量刷新，按配置等待（默认 10 秒）后检查所有电影、电视剧库中的待识别媒体，使用 DeepSeek 从电视剧文件夹或电影文件名中提取名称及可选年份，调用 Jellyfin 搜索并优先应用规则唯一匹配的候选；无法确定时由 AI 判断候选，仍无法确定时临时应用第一个有效且年份匹配的候选。通过元数据更新接口保存所选名称、年份和外部 ID 后即完成，再将元数据刷新加入 Jellyfin 队列，不等待刮削和图片加载结束。
 
